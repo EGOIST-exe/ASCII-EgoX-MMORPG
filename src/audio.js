@@ -39,6 +39,8 @@ export class Soundscape {
       noise.start();
     }
     this.ctx.resume().catch(() => {});
+    const active = this.players.get(this.currentTrack);
+    if (active?.audio.paused && this.music) active.audio.play().catch(() => {});
   }
   setVolume(v) {
     this.volume = v;
@@ -113,7 +115,19 @@ export class Soundscape {
     n.stop(at + duration);
   }
   play(type, gain = 1) {
-    if (type === "mouth") {
+    if (type === "cast") {
+      this.noise(0.45, 0.12 * gain, 2400);
+      this.tone(320, 0.3, "sine", 0.05 * gain, 0, 180);
+    } else if (type === "bite") {
+      this.tone(780, 0.12, "sine", 0.12 * gain);
+      this.tone(1040, 0.18, "sine", 0.1 * gain, 0.12);
+    } else if (type === "dragon") {
+      this.noise(1, 0.12 * gain, 180);
+      this.tone(70, 0.8, "triangle", 0.15 * gain, 0, 35);
+    } else if (type === "hurt") {
+      this.noise(0.12, 0.18 * gain, 700);
+      this.tone(100, 0.18, "triangle", 0.12 * gain, 0, 50);
+    } else if (type === "mouth") {
       this.noise(0.12, 0.5 * gain, 500);
       this.tone(160, 0.35, "triangle", 0.35 * gain, 0, 35);
       this.tone(45, 0.7, "sine", 0.3 * gain);

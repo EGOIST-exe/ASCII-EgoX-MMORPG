@@ -1,27 +1,29 @@
 import "./style.css";
 import {
   World,
-  CLASSES,
-  MOB_TYPES,
   makePlayer,
+  KNIGHT,
+  SKILLS,
+  CINE,
+  SPAWN,
+  DAY_LENGTH,
+  daylight,
   maxHp,
-  maxMana,
   xpNeeded,
-  SHOP,
+  objective,
   zone,
-  safeAt,
-  WORLD_SIZE,
+  SEALS,
   VILLAGES,
+  DUNGEON,
   terrain,
+  treeAt,
+  riverX,
 } from "./core.js";
 import { Renderer } from "./render.js";
-import { TINTS } from "./models.js";
 import { Soundscape, TRACKS } from "./audio.js";
-import { Party } from "./network.js";
-
 const $ = (s, r = document) => r.querySelector(s),
   app = $("#app");
-const escape = (s) =>
+const esc = (s) =>
   String(s ?? "").replace(
     /[&<>"']/g,
     (c) =>
@@ -29,585 +31,309 @@ const escape = (s) =>
         c
       ],
   );
-const classIds = ["mage", "samurai", "elf", "paladin"];
-const symbol = {
-  settings: "⚙",
-  inventory: "▣",
-  party: "♧",
-  journal: "≡",
-  map: "⌖",
-};
 let world = new World(),
   renderer,
-  party,
-  screen = "intro",
+  mode = "intro",
   panel = "",
-  classIndex = 2,
-  gender = "female",
-  tint = 0,
+  dialogue = null,
+  dialogueIndex = 0,
   keys = {},
   last = 0,
-  uiTime = 0,
-  saveTime = 0,
+  uiTimer = 0,
+  saveTimer = 0,
+  saveData = null,
+  seen = new Set(),
   lastFocus,
-  selectedName = "",
-  saved = null;
-let pendingRoom = new URLSearchParams(location.search).get("room"),
-  netStatus = "Bis zu vier Gefährten. Eine gemeinsame Welt.";
-const seen = new Set(),
-  sound = new Soundscape();
+  flashUntil = 0;
 let settings = {
-  volume: 0.45,
+  volume: 0.42,
   music: true,
   track: "auto",
   motion: !matchMedia("(prefers-reduced-motion: reduce)").matches,
   cycle: true,
-  zoom: 1.25,
-  density: 3.5,
-  keys: {
-    up: "w",
-    down: "s",
-    left: "a",
-    right: "d",
-    interact: "e",
-    gather: "g",
-    potion: "q",
-    inventory: "i",
-    journal: "j",
-    party: "p",
-    map: "m",
-  },
+  zoom: 1.05,
 };
 try {
   settings = {
     ...settings,
-    ...JSON.parse(localStorage.getItem("egox-settings-v2") || "{}"),
+    ...JSON.parse(localStorage.getItem("egox-settings-v3") || "{}"),
   };
-  const raw = JSON.parse(
-    localStorage.getItem("egox-save-v2") ||
-      localStorage.getItem("egox-save-v1") ||
+  const old = JSON.parse(
+    localStorage.getItem("egox-save-v3") ||
+      localStorage.getItem("egox-save-v2") ||
       "null",
   );
-  if (
-    raw?.player &&
-    CLASSES[raw.player.kind] &&
-    Number.isFinite(raw.player.x) &&
-    Array.isArray(raw.player.inventory)
-  )
-    saved = raw;
+  if (old?.player?.name) saveData = old;
 } catch {}
+const sound = new Soundscape();
 sound.volume = settings.volume;
 sound.music = settings.music;
 sound.trackMode = settings.track;
-function player() {
-  return world.players.get(party?.playerId || "local");
+function audioStart() {
+  sound.start();
+  if (!sound.currentTrack)
+    sound.setTrack(
+      mode === "intro" || mode === "creation" ? "elise" : "autumn",
+    );
 }
-function persist() {
+audioStart();
+document.addEventListener("pointerdown", audioStart, { once: true });
+document.addEventListener("keydown", audioStart, { once: true });
+function persistSettings() {
   try {
-    localStorage.setItem("egox-settings-v2", JSON.stringify(settings));
+    localStorage.setItem("egox-settings-v3", JSON.stringify(settings));
   } catch {}
 }
-function makeParty() {
-  party = new Party(world, (message) => {
-    netStatus = message;
-    toast(message);
-    if (
-      screen === "game" &&
-      party.mode === "solo" &&
-      !world.players.has("local")
-    )
-      restore();
-    if (panel === "party") renderPanel();
-  });
+function save() {
+  if (mode !== "game") return;
+  try {
+    saveData = world.serialize();
+    localStorage.setItem("egox-save-v3", JSON.stringify(saveData));
+  } catch {
+    message("Der Browser konnte den Spielstand nicht speichern.");
+  }
 }
-makeParty();
-function brand() {
-  return '<span class="wordmark">EGO<span>X</span><small>ASCII REALMS</small></span>';
-}
-function toast(text) {
-  const root = $("#toasts");
-  if (!root) return;
-  const el = document.createElement("div");
-  el.className = "toast";
-  el.textContent = text;
-  root.appendChild(el);
-  while (root.children.length > 3) root.firstChild.remove();
-  setTimeout(() => el.remove(), 4600);
-}
-function rendererSettings() {
+function configureRenderer() {
+  renderer.zoom = settings.zoom;
   renderer.motion = settings.motion;
   renderer.cycle = settings.cycle;
-  renderer.zoom = settings.zoom;
-  if (renderer.cellSize !== settings.density) {
-    renderer.cellSize = settings.density;
-    renderer.resize();
+}
+function message(text) {
+  const el = $("#message");
+  if (el) {
+    el.textContent = text;
+    el.classList.add("visible");
+    flashUntil = performance.now() + 5000;
   }
 }
 
 function intro() {
-  app.innerHTML = `<section class="intro"><header>${brand()}<a href="https://discord.gg/ego-x" target="_blank" rel="noopener noreferrer">DISCORD ↗</a></header><canvas id="intro-canvas" aria-label="Animiertes EGOIST-Intro in ASCII"></canvas><div class="intro-title"><span class="eyebrow">A WORLD WRITTEN IN CHARACTERS</span><h1>Die Welt wartet.</h1><button class="primary" id="begin-intro">Mit Ton beginnen <span>↗</span></button><p id="loading-label">Intro & Musik starten nach deinem Klick.</p><div class="loading-track"><i></i></div></div><footer><span>EGOX · REALMS REBORN</span><button id="skip-intro">Überspringen →</button></footer></section><div id="toasts" aria-live="polite"></div>`;
-  const canvas = $("#intro-canvas"),
+  app.innerHTML =
+    '<section class="intro"><canvas id="intro" aria-label="Automatisch startendes ASCII-Intro"></canvas><div class="intro-caption"><span>E G O X</span><small>D E R   L E T Z T E   E I D</small></div><button id="skip-intro" class="quiet">[ Enter ] überspringen</button></section>';
+  const canvas = $("#intro"),
     ctx = canvas.getContext("2d"),
     sample = document.createElement("canvas"),
     sc = sample.getContext("2d", { willReadFrequently: true });
-  sample.width = 220;
-  sample.height = 62;
+  sample.width = 210;
+  sample.height = 59;
   const video = document.createElement("video");
   video.src = `${import.meta.env.BASE_URL}assets/intro.mp4`;
-  video.preload = "auto";
+  video.autoplay = true;
   video.muted = true;
   video.playsInline = true;
-  let ended = false,
+  video.preload = "auto";
+  let done = false,
     frame,
-    mouth = false,
-    started = false;
+    mouth = false;
   const finish = () => {
-    if (ended) return;
-    ended = true;
+    if (done) return;
+    done = true;
     cancelAnimationFrame(frame);
     video.pause();
     video.removeAttribute("src");
     video.load();
-    selection();
+    creation();
   };
   const draw = () => {
-    if (ended) return;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height;
-    ctx.fillStyle = "#07090d";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (done) return;
+    const r = canvas.getBoundingClientRect();
+    canvas.width = r.width;
+    canvas.height = r.height;
+    ctx.fillStyle = "#101b18";
+    ctx.fillRect(0, 0, r.width, r.height);
     if (video.readyState >= 2) {
-      sc.drawImage(video, 0, 0, 220, 62);
-      const data = sc.getImageData(0, 0, 220, 62).data,
-        size = Math.min(canvas.width / 220, canvas.height / 124),
-        left = (canvas.width - size * 220) / 2,
-        top = (canvas.height - size * 124) / 2;
-      ctx.font = `bold ${size * 1.8}px monospace`;
+      sc.drawImage(video, 0, 0, 210, 59);
+      const data = sc.getImageData(0, 0, 210, 59).data,
+        size = Math.min((r.width * 0.85) / 210, (r.height * 0.7) / 118),
+        left = (r.width - 210 * size) / 2,
+        top = (r.height - 118 * size) / 2 - 25;
+      ctx.font = `${size * 1.8}px "Courier New",monospace`;
       const chars = " .,:;=+*#%@",
-        tick = Math.floor(video.currentTime * 15);
-      for (let y = 0; y < 62; y++)
-        for (let x = 0; x < 220; x++) {
-          const i = (y * 220 + x) * 4,
+        tick = Math.floor(video.currentTime * 12);
+      for (let y = 0; y < 59; y++)
+        for (let x = 0; x < 210; x++) {
+          const i = (y * 210 + x) * 4,
             l = (data[i] + data[i + 1] + data[i + 2]) / 765;
           if (l < 0.05) continue;
           const index = Math.min(
             10,
             Math.floor(l * 9) + ((x + y + tick) % 3 === 0 ? 1 : 0),
           );
-          ctx.fillStyle = `rgb(${Math.round(120 + l * 130)},${Math.round(130 + l * 120)},${Math.round(145 + l * 110)})`;
+          ctx.fillStyle = `rgb(${130 + l * 115},${145 + l * 100},${120 + l * 110})`;
           ctx.fillText(chars[index], left + x * size, top + y * size * 2);
         }
-      if (started && video.currentTime >= 1.75 && !mouth) {
+      if (video.currentTime > 1.75 && !mouth) {
         mouth = true;
         sound.play("mouth");
       }
     }
     frame = requestAnimationFrame(draw);
   };
-  $("#begin-intro").onclick = () => {
-    if (started) return;
-    started = true;
-    sound.start();
-    sound.setTrack("elise");
-    $("#begin-intro").hidden = true;
-    $("#loading-label").textContent = "Die Zeichen erwachen …";
-    $(".loading-track").classList.add("active");
-    video.play().catch(finish);
-    setTimeout(finish, 7000);
-  };
-  $("#skip-intro").onclick = () => {
-    sound.start();
-    sound.setTrack("elise");
-    finish();
-  };
-  video.onended = () => setTimeout(finish, 350);
+  $("#skip-intro").onclick = finish;
+  window.skipIntro = finish;
+  video.onended = () => setTimeout(finish, 250);
   video.onerror = finish;
-  video.addEventListener("loadeddata", draw, { once: true });
+  video.play().catch(() => {});
+  draw();
+  setTimeout(finish, 6500);
 }
-function selection() {
-  renderer?.dispose();
-  screen = "selection";
-  panel = "";
-  keys = {};
+function creation() {
+  mode = "creation";
   world = new World();
-  world.weather = "clear";
-  makeParty();
-  app.innerHTML = `<section class="creation"><header>${brand()}<span class="chapter">01 / WÄHLE DEINEN WEG</span><a href="https://discord.gg/ego-x" target="_blank" rel="noopener noreferrer">DISCORD ↗</a></header><div class="creation-title"><span class="eyebrow">DEINE GESCHICHTE HAT EINEN ANFANG.</span><h1>Wähle deinen Weg.</h1></div><canvas id="character-canvas" aria-label="Drehbares animiertes 3D-Charaktermodell im ASCII-Stil"></canvas><div class="character-orbit"><span>MODELL / <b id="model-number">03</b></span><i></i><span>← SWIPE →</span></div><div class="carousel"><button id="prev-class" aria-label="Vorherige Klasse">←</button><div><span id="class-counter">03 / 04</span><h2 id="class-name">Elf</h2></div><button id="next-class" aria-label="Nächste Klasse">→</button></div><div class="class-dots" aria-label="Klasse auswählen">${classIds.map((id, i) => `<button data-class="${i}" aria-label="${CLASSES[id].name}"></button>`).join("")}</div><section class="creation-details"><span id="class-role" class="eyebrow"></span><h2 id="class-title"></h2><p id="class-desc"></p><div class="character-stats" id="class-stats"></div><label class="field-label">GESTALT</label><div class="segmented"><button data-gender="female">Weiblich</button><button data-gender="male">Männlich</button></div><label class="field-label">FARBVARIANTE</label><div class="swatches">${TINTS.map((color, i) => `<button data-tint="${i}" aria-label="Farbvariante ${i + 1}" style="--swatch:${color}"></button>`).join("")}</div><form id="character-form"><label for="character-name" class="field-label">DEIN NAME</label><input id="character-name" minlength="2" maxlength="20" required placeholder="Wie nennt man dich?" autocomplete="nickname" value="${escape(selectedName)}"/><button class="primary" type="submit">${pendingRoom ? "Gruppe beitreten" : "In die Welt aufbrechen"} <span>→</span></button></form>${saved ? '<button id="continue-game" class="continue">Abenteuer fortsetzen ↗</button>' : ""}<span class="creation-note">Vier Klassen. Ein eigener Weg.</span></section><footer><span>3D / LIVING ASCII</span><span>← → Klasse wählen · Ziehen zum Drehen</span><button id="selection-sound">♫ MUSIK</button></footer></section><div id="toasts" aria-live="polite"></div>`;
-  renderer = new Renderer($("#character-canvas"), world, { showcase: true });
-  rendererSettings();
-  renderer.cellSize = Math.min(settings.density, 3.5);
-  renderer.resize();
-  updateClass();
-  $("#prev-class").onclick = () => cycleClass(-1);
-  $("#next-class").onclick = () => cycleClass(1);
-  app.querySelectorAll("[data-class]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        classIndex = +b.dataset.class;
-        updateClass();
-      }),
-  );
-  app.querySelectorAll("[data-gender]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        gender = b.dataset.gender;
-        updateClass();
-      }),
-  );
-  app.querySelectorAll("[data-tint]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        tint = +b.dataset.tint;
-        updateClass();
-      }),
-  );
-  let pointerStart = null,
-    rotation = 0;
-  const canvas = $("#character-canvas");
-  canvas.onpointerdown = (e) => {
-    pointerStart = { x: e.clientX, y: e.clientY };
-    rotation = renderer.avatar?.rotation.y || 0;
-    canvas.setPointerCapture(e.pointerId);
-  };
-  canvas.onpointermove = (e) => {
-    if (pointerStart && renderer.avatar) {
-      renderer.avatar.rotation.y =
-        rotation + (e.clientX - pointerStart.x) * 0.012;
-      renderer.dragging = true;
-    }
-  };
-  canvas.onpointerup = (e) => {
-    if (
-      pointerStart &&
-      Math.abs(e.clientX - pointerStart.x) > 70 &&
-      e.pointerType === "touch"
-    )
-      cycleClass(e.clientX < pointerStart.x ? 1 : -1);
-    pointerStart = null;
-    setTimeout(() => {
-      if (renderer) renderer.dragging = false;
-    }, 2500);
-  };
-  $("#character-form").onsubmit = (e) => {
+  renderer?.dispose();
+  app.innerHTML = `<section class="creation"><canvas id="world" aria-label="Ein männlicher Ritter sitzt in einer blühenden Wiese an einer alten Linde; alles ist aus ASCII-Zeichen gezeichnet."></canvas><div class="creation-wash"></div><section class="name-form"><span class="eyebrow">AURELION IST GEFALLEN.</span><h1>Ein Eid bleibt.</h1><p>Die Mauern sind zu Asche geworden.<br>Doch irgendwo wartet sie noch auf dich.</p><form id="name-form"><label for="knight-name">Wie heißt der letzte Ritter?</label><input id="knight-name" name="name" minlength="2" maxlength="20" value="${esc(saveData?.player?.name || "")}" autocomplete="nickname" placeholder="Dein Name" required/><button type="submit" class="text-button">Den Weg beginnen <span>--&gt;</span></button></form>${saveData ? '<button id="continue-game" class="continue">[ Gespeicherten Weg fortsetzen ]</button>' : ""}<span class="small-note">Ein Ritter. Ein verlorenes Königreich. Dein Weg.</span></section><span class="creation-corner">EGOX / DER LETZTE EID</span></section>`;
+  renderer = new Renderer($("#world"), world);
+  configureRenderer();
+  $("#name-form").onsubmit = (e) => {
     e.preventDefault();
-    const name = $("#character-name").value.trim();
-    if (name.length < 2) {
-      $("#character-name").setCustomValidity(
-        "Mindestens zwei Zeichen eingeben.",
+    const n = $("#knight-name").value.trim();
+    if (n.length < 2) {
+      $("#knight-name").setCustomValidity(
+        "Bitte gib mindestens zwei Zeichen ein.",
       );
-      $("#character-name").reportValidity();
+      $("#knight-name").reportValidity();
       return;
     }
-    selectedName = name;
-    sound.start();
-    start(makePlayer(classIds[classIndex], name, gender, tint));
+    start(new World(makePlayer(n)));
   };
-  $("#character-name").oninput = (e) => e.target.setCustomValidity("");
+  $("#knight-name").oninput = (e) => e.target.setCustomValidity("");
   if ($("#continue-game"))
-    $("#continue-game").onclick = () => {
-      sound.start();
-      restore();
-      start(world.players.get("local"), true);
-    };
-  $("#selection-sound").onclick = () => {
-    sound.start();
-    settings.music = !settings.music;
-    sound.music = settings.music;
-    sound.setTrack(settings.music ? "elise" : "");
-    persist();
-  };
+    $("#continue-game").onclick = () => start(World.restore(saveData));
 }
-function cycleClass(dir) {
-  classIndex = (classIndex + dir + 4) % 4;
-  updateClass();
-  sound.play("click");
-}
-function updateClass() {
-  const id = classIds[classIndex],
-    c = CLASSES[id];
-  $("#class-name").textContent = c.name;
-  $("#class-title").textContent = c.title;
-  $("#class-role").textContent = c.role;
-  $("#class-desc").textContent = c.desc;
-  $("#class-counter").textContent = `0${classIndex + 1} / 04`;
-  $("#model-number").textContent = `0${classIndex + 1}`;
-  $("#class-stats").innerHTML = [
-    ["LEBEN", c.hp],
-    ["MANA", c.mana],
-    ["TEMPO", c.speed.toFixed(1)],
-    ["SCHUTZ", c.defense],
-  ]
-    .map(([label, n]) => `<span><b>${n}</b>${label}</span>`)
-    .join("");
-  app.querySelectorAll("[data-class]").forEach((b) => {
-    b.classList.toggle("active", +b.dataset.class === classIndex);
-    b.setAttribute("aria-pressed", +b.dataset.class === classIndex);
-  });
-  app.querySelectorAll("[data-gender]").forEach((b) => {
-    b.classList.toggle("active", b.dataset.gender === gender);
-    b.setAttribute("aria-pressed", b.dataset.gender === gender);
-  });
-  app.querySelectorAll("[data-tint]").forEach((b) => {
-    b.classList.toggle("active", +b.dataset.tint === tint);
-    b.setAttribute("aria-pressed", +b.dataset.tint === tint);
-  });
-  renderer.setCharacter(id, gender, tint);
-  document.documentElement.style.setProperty(
-    "--class-color",
-    tint ? TINTS[tint] : c.color,
-  );
-  $('[data-tint="0"]').style.setProperty("--swatch", c.color);
-}
-
-function restore() {
-  if (!saved) return;
-  world = new World();
-  const defaults = makePlayer(
-    saved.player.kind,
-    saved.player.name,
-    saved.player.gender,
-    saved.player.tint,
-  );
-  const p = {
-    ...defaults,
-    ...saved.player,
-    id: "local",
-    input: {},
-    anim: { type: "idle", start: 0, duration: 0 },
-  };
-  p.materials = { ...defaults.materials, ...p.materials };
-  p.hp = Math.min(p.hp, maxHp(p));
-  p.mana = Math.min(p.mana, maxMana(p));
-  p.cooldowns = [0, 0, 0, 0];
-  world.time = saved.time || 0;
-  world.depleted = saved.depleted || {};
-  world.opened = new Set(
-    (saved.opened || []).map((id) =>
-      /^c\d/.test(id)
-        ? id.replace(/^c/, "chest:")
-        : /^g\d/.test(id)
-          ? id.replace(/^g/, "coin:")
-          : /^s\d/.test(id)
-            ? id.replace(/^s/, "shrine:")
-            : id,
-    ),
-  );
-  if (saved.version !== 2) {
-    p.weapon = CLASSES[p.kind].weapon;
-    p.inventory.forEach((i) => {
-      if (i.id === "starter") i.name = p.weapon;
-    });
-  }
-  world.ensureArea(p.x, p.y);
-  world.objects.forEach((o) => (o.opened = world.opened.has(o.id)));
-  world.players.set("local", p);
-  makeParty();
-  if (renderer) renderer.world = world;
-}
-function save() {
-  const p = world.players.get("local");
-  if (screen !== "game" || !p || party.mode === "guest") return;
-  try {
-    saved = {
-      version: 2,
-      player: { ...p, input: {} },
-      time: world.time,
-      depleted: world.depleted,
-      opened: [
-        ...new Set([
-          ...world.opened,
-          ...world.objects.filter((o) => o.opened).map((o) => o.id),
-        ]),
-      ],
-    };
-    localStorage.setItem("egox-save-v2", JSON.stringify(saved));
-  } catch {
-    toast("Der Browser konnte den Spielstand nicht speichern.");
-  }
-}
-function start(p, restored = false) {
+function start(next) {
   renderer?.dispose();
-  if (!restored) {
-    world = new World();
-    world.players.set("local", p);
-    makeParty();
-  }
-  screen = "game";
+  world = next;
+  mode = "game";
   panel = "";
+  dialogue = null;
   keys = {};
-  app.innerHTML = `<section class="game"><canvas id="world" tabindex="0" aria-label="3D-ASCII-Welt. WASD bewegen, Leertaste angreifen, E interagieren, G abbauen."></canvas><div class="edge-shade" aria-hidden="true"></div><div id="entity-labels" aria-hidden="true"></div><div class="vitals"><div class="identity"><b id="hud-name"></b><span id="hud-level"></span></div>${["health", "mana", "stamina"].map((id, i) => `<div class="vital ${id}"><span>${["LP", "MP", "AU"][i]}</span><div><i id="${id}-fill"></i></div><b id="${id}-value"></b></div>`).join("")}<span class="class-label" id="hud-class"></span></div><div class="area"><span id="zone-title"></span><small id="area-detail"></small></div><div class="wealth"><span>◈ <b id="coins"></b></span><small id="buff-label"></small></div><div class="lower-left"><div id="recent-event" aria-live="polite"></div><nav class="tools" aria-label="Spielmenü">${["settings", "inventory", "party", "journal", "map"].map((id) => `<button data-panel="${id}" aria-label="${{ settings: "Einstellungen", inventory: "Inventar", party: "Gruppe", journal: "Journal", map: "Weltkarte" }[id]}" title="${{ settings: "Einstellungen · Esc", inventory: "Inventar · I", party: "Gruppe · P", journal: "Journal · J", map: "Weltkarte · M" }[id]}">${symbol[id]}</button>`).join("")}</nav><span class="world-mark">EGOX <i>·</i> <span id="server-status">SOLO</span></span></div><div class="skillbar-wrap"><div id="interact-hint" hidden></div><div class="skillbar"><button data-action="attack" class="basic-attack" title="Standardangriff · Leertaste"><span>╱</span><kbd>SPACE</kbd></button><div id="skill-slots"></div><button data-action="potion" class="potion" title="Heiltrank"><span>♜</span><b id="potion-count"></b><kbd id="potion-key">Q</kbd></button></div><div class="xp-line"><i id="xp-fill"></i></div><div class="controls-hint">WASD bewegen <i>·</i> SHIFT sprinten <i>·</i> E interagieren <i>·</i> G abbauen</div></div><div class="lower-right"><span id="weapon-name"></span><div id="materials-summary"></div><span id="weather-label"></span><span id="coords"></span></div><div id="death-screen" hidden><span class="eyebrow">EIN FUNKE BLEIBT.</span><h1>Deine Geschichte geht weiter.</h1><p>Erwache in Immerhain · Opfergabe: 10 % Gold</p><button class="primary" data-action="respawn">Am Schrein erwachen →</button></div></section><div id="modal-root"></div><div id="toasts" aria-live="polite"></div>`;
+  seen = new Set();
+  app.innerHTML = `<section class="game"><canvas id="world" tabindex="0" aria-label="ASCII-Singleplayer-Abenteuer. WASD bewegen, Leertaste Schwert, E interagieren, G abbauen, V Drache."></canvas><div class="game-hud"><span id="knight-identity"></span><span id="health-line"></span><span id="stamina-line"></span></div><div class="journey"><span id="location"></span><small id="daytime"></small></div><div class="quest-note" id="quest-note"></div><div id="message" class="message" aria-live="polite"></div><div id="context-hint" class="context-hint"></div><div class="game-tools"><button data-panel="settings">[ Esc ]</button><button data-panel="journal">[ J ] Reise</button><button data-panel="inventory">[ I ] Gepäck</button><button data-panel="map">[ M ] Karte</button></div><div class="skill-hints" id="skill-hints"></div><div class="resources" id="resources"></div><div id="death" hidden><span class="eyebrow">DEIN EID IST NOCH NICHT ERFÜLLT.</span><h2>Du wirst noch gebraucht.</h2><p>Ein neuer Atemzug am letzten Rastplatz.<br>Opfergabe: 5 % deines Goldes.</p><button id="respawn">[ R ] Wieder erwachen</button></div><div id="cinematic-copy" hidden><span id="cinematic-title"></span><p id="cinematic-line"></p><button id="skip-cinematic">[ Enter ] weiter</button></div></section><div id="modal-root"></div><div id="dialogue-root"></div>`;
   renderer = new Renderer($("#world"), world);
-  rendererSettings();
-  renderer.cameraTarget.set(p.x, 0, p.y);
-  wireNav();
-  app
-    .querySelectorAll("[data-action]")
-    .forEach((b) => (b.onclick = () => action(b.dataset.action)));
-  $("#world").onpointerdown = () => action("attack");
-  $("#world").focus({ preventScroll: true });
-  updateUI();
-  save();
-  if (pendingRoom) {
-    const room = pendingRoom;
-    pendingRoom = null;
-    party.join(room, p);
-  }
-}
-function wireNav() {
-  app
+  configureRenderer();
+  renderer.camera = { x: world.player.x, y: world.player.y };
+  document
     .querySelectorAll("[data-panel]")
     .forEach((b) => (b.onclick = () => openPanel(b.dataset.panel)));
+  $("#respawn").onclick = () => act("respawn");
+  $("#skip-cinematic").onclick = () => act("skip-cinematic");
+  $("#world").onpointerdown = () => {
+    if (!panel && !dialogue && !world.cinematic) act("attack");
+  };
+  $("#world").focus({ preventScroll: true });
+  if (!world.player.story.begun && !world.cinematic)
+    world.startCinematic("prologue");
+  updateUI();
+  save();
 }
-function action(type, data) {
-  if (screen !== "game") return;
-  party.action(type, data);
-  if (panel === "inventory" || panel === "shop") setTimeout(renderPanel, 160);
+function act(type, data) {
+  if (mode !== "game") return;
+  world.action(type, data);
+  if (type === "respawn") save();
+  if (panel === "shop" || panel === "inventory") renderPanel();
 }
-let skillVersion = "";
 function updateUI() {
-  const p = player();
-  if (screen !== "game" || !p) return;
-  const c = CLASSES[p.kind];
-  $("#hud-name").textContent = p.name;
-  $("#hud-level").textContent = `LV ${p.level}`;
-  $("#hud-class").textContent =
-    `${c.name} / ${c.role.split(" · ")[0].toLowerCase()}`;
-  for (const [id, value, max] of [
-    ["health", p.hp, maxHp(p)],
-    ["mana", p.mana, maxMana(p)],
-    ["stamina", p.stamina, 100],
-  ]) {
-    $(`#${id}-fill`).style.width = `${(Math.max(0, value) / max) * 100}%`;
-    $(`#${id}-value`).textContent = `${Math.ceil(value)}/${max}`;
-  }
-  $("#coins").textContent = p.coins;
-  $("#zone-title").textContent = Number.isInteger(p.inside)
-    ? "Ein stiller Ort"
-    : zone(p.x, p.y);
-  $("#area-detail").textContent = Number.isInteger(p.inside)
-    ? "Innenraum"
-    : safeAt(p.x, p.y)
-      ? "Zuflucht"
-      : "Wildnis";
-  $("#buff-label").textContent =
-    p.buff > 0 ? `Schutzsegen ${Math.ceil(p.buff)}s` : "";
-  $("#weapon-name").textContent = p.weapon;
-  $("#coords").textContent = `${Math.round(p.x)} : ${Math.round(p.y)}`;
-  $("#server-status").textContent =
-    party.mode === "solo" ? "SOLO" : `GRUPPE ${world.players.size}/4`;
-  $("#potion-count").textContent = p.potions;
-  $("#potion-key").textContent = settings.keys.potion.toUpperCase();
-  $("#weather-label").textContent = {
-    clear: "Heiter",
-    rain: "Regen",
-    storm: "Gewitter",
-    snow: "Schneefall",
-  }[world.weather];
-  const mat = p.materials || {};
-  $("#materials-summary").textContent =
-    `Holz ${mat.wood || 0} · Stein ${mat.stone || 0}`;
-  $("#xp-fill").style.width = `${(p.xp / xpNeeded(p)) * 100}%`;
-  $("#death-screen").hidden = p.hp > 0;
-  const version = `${p.kind}:${p.unlocked.join(",")}`;
-  if (version !== skillVersion || !$("#skill-slots").children.length) {
-    skillVersion = version;
-    $("#skill-slots").innerHTML = [0, 1, 2, 3]
-      .map((i) => {
-        const s = c.skills[p.unlocked[i]];
-        return `<button data-skill="${i}" ${s ? "" : "disabled"} aria-label="${s ? s.name : "Gesperrter Platz"}" title="${s ? `${s.name} · ${s.cost} Mana · ${s.cd}s` : "Beim Levelaufstieg freischalten"}"><span>${s?.icon || "◇"}</span><i></i><kbd>${i + 1}</kbd><small>${s?.name || "Gesperrt"}</small></button>`;
-      })
-      .join("");
-    $("#skill-slots")
-      .querySelectorAll("[data-skill]")
-      .forEach((b) => (b.onclick = () => action("skill", +b.dataset.skill)));
-  }
-  $("#skill-slots")
-    .querySelectorAll("[data-skill]")
-    .forEach((b, i) => {
-      const cd = p.cooldowns[i] || 0;
-      b.classList.toggle("cooldown", cd > 0);
-      $("i", b).textContent = cd > 0 ? Math.ceil(cd) : "";
-      b.classList.toggle("no-mana", c.skills[p.unlocked[i]]?.cost > p.mana);
-    });
-  const near = world.nearest(p),
-    resource = world.resource(p),
-    hint = $("#interact-hint");
-  hint.hidden = (!near && !resource) || !!panel || p.hp <= 0;
-  hint.innerHTML = near
-    ? `<kbd>${escape(settings.keys.interact.toUpperCase())}</kbd> ${escape(near.name || (near.type === "chest" ? "Kiste öffnen" : "Schrein berühren"))}`
-    : resource
-      ? `<kbd>${escape(settings.keys.gather.toUpperCase())}</kbd> ${resource.type === "tree" ? "Baum fällen" : "Stein abbauen"}`
+  if (mode !== "game") return;
+  const p = world.player,
+    clock = daylight(world.clock),
+    hours = Math.floor(clock.hour),
+    minutes = Math.floor((clock.hour - hours) * 60);
+  $("#knight-identity").textContent = `${p.name}  /  RITTER ${p.level}`;
+  $("#health-line").textContent =
+    `LEBEN [${"|".repeat(Math.ceil((p.hp / maxHp(p)) * 18))}${".".repeat(18 - Math.ceil((p.hp / maxHp(p)) * 18))}] ${Math.ceil(p.hp)}`;
+  $("#stamina-line").textContent =
+    p.stamina < 92 || keys.tab
+      ? `ATEM  [${"|".repeat(Math.ceil((p.stamina / 100) * 18))}${".".repeat(18 - Math.ceil((p.stamina / 100) * 18))}]`
       : "";
-  const labels = [];
-  for (const e of [
-    ...world.players.values(),
-    ...world.npcs,
-    ...world.mobs.filter(
-      (m) => !m.dead && m.hp > 0 && m.hp < MOB_TYPES[m.kind].hp,
-    ),
-  ]) {
-    if (
-      Math.hypot(e.x - p.x, e.y - p.y) > 19 ||
-      (Number.isInteger(e.inside) ? e.inside : null) !==
-        (Number.isInteger(p.inside) ? p.inside : null)
-    )
-      continue;
-    const point = renderer.project(e.x, e.y, e.kind === 0 ? 1.5 : 3.25);
-    if (!point.visible) continue;
-    const ally = e.id && world.players.has(e.id),
-      mob = Number.isInteger(e.kind);
-    labels.push(
-      `<div class="entity-label ${ally ? "ally" : ""}" style="left:${point.x}px;top:${point.y}px">${escape(e.name || MOB_TYPES[e.kind]?.name)}${ally && e.id !== p.id ? `<span class="ally-hp"><i style="width:${(e.hp / maxHp(e)) * 100}%"></i></span>` : ""}${mob ? `<span class="enemy-hp"><i style="width:${(Math.max(0, e.hp) / MOB_TYPES[e.kind].hp) * 100}%"></i></span>` : ""}</div>`,
+  $("#location").textContent = zone(p);
+  $("#daytime").textContent =
+    `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")} / ${clock.night ? "Nacht" : hours < 11 ? "Morgen" : hours > 17 ? "Abend" : "Tag"}`;
+  $("#quest-note").textContent = objective(p);
+  $("#resources").textContent =
+    `${p.coins} Gold${p.mounted ? " / Ascheflügel" : ""}`;
+  $("#death").hidden = p.hp > 0;
+  $("#context-hint").hidden =
+    !!panel || !!dialogue || !!world.cinematic || p.hp <= 0;
+  const n = world.nearest();
+  $("#context-hint").textContent = p.fishing
+    ? p.fishing.bite
+      ? "[ E ] Biss! Jetzt einholen."
+      : "Die Pose tanzt. Warte auf einen Biss ..."
+    : n
+      ? `[ E ] ${n.name || { chest: "Alte Kiste öffnen", elder: "Merin", merchant: "Nela", healer: "Lio" }[n.type]}`
+      : world.atRiver()
+        ? "[ E ] Angel auswerfen"
+        : "";
+  $("#skill-hints").textContent = SKILLS.map(
+    (s, i) =>
+      `${i + 1} ${p.level < s.level ? `Rang ${s.level}` : s.name}${p.cooldowns[i] > 0 ? ` (${Math.ceil(p.cooldowns[i])})` : ""}`,
+  ).join("   ");
+  $("#skill-hints").classList.toggle(
+    "visible",
+    !!keys.tab || p.attackCd > 0 || p.block > 0,
+  );
+  if (performance.now() > flashUntil) $("#message").classList.remove("visible");
+  const cine = world.cinematic;
+  $("#cinematic-copy").hidden = !cine;
+  $(".game").classList.toggle("in-cinematic", !!cine);
+  if (cine) {
+    const spec = CINE[cine.id],
+      segment = cine.duration / spec.lines.length,
+      index = Math.min(spec.lines.length - 1, Math.floor(cine.time / segment)),
+      elapsed = cine.time - index * segment;
+    $("#cinematic-title").textContent = spec.title;
+    $("#cinematic-line").textContent = spec.lines[index].slice(
+      0,
+      Math.floor(elapsed * 36) + 1,
     );
   }
-  for (const e of world.effects)
-    if (e.text && ["hit", "heal", "damage", "chips", "loot"].includes(e.kind)) {
-      const point = renderer.project(
-        e.x,
-        e.y,
-        2.7 + (1 - e.life / e.maxLife) * 1.5,
-      );
-      if (point.visible)
-        labels.push(
-          `<div class="floating-text" style="left:${point.x}px;top:${point.y}px;color:${escape(e.color)}">${escape(e.text)}</div>`,
-        );
-    }
-  $("#entity-labels").innerHTML = labels.join("");
   for (const e of world.events) {
     if (seen.has(e.id)) continue;
     seen.add(e.id);
-    if (e.type === "sfx") {
-      const source = world.players.get(e.player);
-      if (
-        source &&
-        (Number.isInteger(source.inside) ? source.inside : null) ===
-          (Number.isInteger(p.inside) ? p.inside : null)
-      ) {
-        const distance = Math.hypot(source.x - p.x, source.y - p.y);
-        if (distance < 22) sound.play(e.text, 1 - distance / 25);
-      }
-      continue;
+    if (e.type === "message") message(e.text);
+    if (e.type === "sound") sound.play(e.name);
+    if (e.type === "save") save();
+    if (e.type === "panel") openPanel(e.panel);
+    if (e.type === "dialogue") {
+      dialogue = e;
+      dialogueIndex = 0;
+      keys = {};
+      showDialogue();
     }
-    if (e.player && e.player !== party.playerId) continue;
-    if (e.type === "panel") {
-      openPanel(e.text);
-      continue;
-    }
-    $("#recent-event").textContent = e.text;
-    if (e.type === "level" || e.type === "loot") {
-      toast(e.text);
-      sound.play(e.type);
+    if (e.type === "cinematic") {
+      keys = {};
+      if (panel) closePanel();
     }
   }
-  if (seen.size > 1500) {
+  if (seen.size > 1000) {
     seen.clear();
     world.events.forEach((e) => seen.add(e.id));
   }
 }
-
+function showDialogue() {
+  if (!dialogue) {
+    $("#dialogue-root").innerHTML = "";
+    return;
+  }
+  $("#dialogue-root").innerHTML =
+    `<section class="dialogue" role="dialog" aria-modal="true" aria-label="Gespräch"><span>${esc(dialogue.speaker)}</span><p>${esc(dialogue.lines[dialogueIndex])}</p><button id="next-dialogue">[ E ] ${dialogueIndex + 1 < dialogue.lines.length ? "Weiter" : "Den Weg fortsetzen"}</button></section>`;
+  $("#next-dialogue").onclick = nextDialogue;
+  $("#next-dialogue").focus({ preventScroll: true });
+}
+function nextDialogue() {
+  if (!dialogue) return;
+  dialogueIndex++;
+  if (dialogueIndex >= dialogue.lines.length) {
+    world.resolveDialogue(dialogue.resolve);
+    dialogue = null;
+    save();
+    $("#world").focus({ preventScroll: true });
+  }
+  showDialogue();
+}
 function openPanel(name) {
-  if (screen !== "game") return;
+  if (mode !== "game" || world.cinematic || dialogue || world.player.hp <= 0)
+    return;
   if (panel === name) {
     closePanel();
     return;
@@ -615,272 +341,209 @@ function openPanel(name) {
   lastFocus = document.activeElement;
   panel = name;
   keys = {};
+  world.player.input = {};
   renderPanel();
 }
 function closePanel() {
   panel = "";
   $("#modal-root").innerHTML = "";
   keys = {};
-  lastFocus?.focus?.({ preventScroll: true });
-  if (!lastFocus?.isConnected) $("#world")?.focus({ preventScroll: true });
+  $("#world")?.focus({ preventScroll: true });
 }
 function renderPanel() {
-  if (!panel || screen !== "game") return;
-  const p = player();
-  if (!p) return;
-  const titles = {
-    settings: "Einstellungen",
-    inventory: "Dein Gepäck",
-    party: "Deine Gefährten",
-    journal: "Wächter von Immerhain",
-    shop: "Elaras Waren",
-    quest: "Eldrics Bitte",
-    healer: "Eine Atempause",
-    map: "Die bekannten Lande",
-  };
-  let body = "";
-  if (panel === "inventory") {
-    const mat = p.materials || {};
-    body = `<div class="materials">${[
-      ["wood", "Holz"],
-      ["stone", "Stein"],
-      ["ancientWood", "Antikes Holz"],
-      ["rareOre", "Seltene Erze"],
+  if (!panel) return;
+  const p = world.player;
+  let title = "",
+    body = "";
+  if (panel === "settings") {
+    title = "Ein Moment für dich";
+    body = `<div class="setting"><label for="volume">Lautstärke</label><input id="volume" type="range" min="0" max="1" step=".05" value="${settings.volume}"/></div><div class="setting"><label for="music">Musik</label><input id="music" type="checkbox" ${settings.music ? "checked" : ""}/></div><div class="setting"><label for="track">Klang der Reise</label><select id="track">${[["auto", "Dem Weg folgen"], ...Object.entries(TRACKS)].map(([id, label]) => `<option value="${id}" ${settings.track === id ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="setting"><label for="motion">Bewegte Natur</label><input id="motion" type="checkbox" ${settings.motion ? "checked" : ""}/></div><div class="setting"><label for="cycle">Lebendige ASCII-Zeichen</label><input id="cycle" type="checkbox" ${settings.cycle ? "checked" : ""}/></div><div class="setting"><label for="zoom">Nähe</label><select id="zoom">${[
+      [0.85, "Weiter"],
+      [1.05, "Nah"],
+      [1.3, "Sehr nah"],
     ]
       .map(
         ([id, label]) =>
-          `<span class="${id === "ancientWood" || id === "rareOre" ? "rare" : ""}"><b>${mat[id] || 0}</b>${label}</span>`,
+          `<option value="${id}" ${settings.zoom === id ? "selected" : ""}>${label}</option>`,
       )
       .join(
         "",
-      )}</div><p class="hint">Fälle Bäume und baue Felsen mit G ab. Seltene Funde: 2,5 % der Vorkommen. Nach vier Minuten wachsen Ressourcen nach.</p><div class="inventory-meta">◈ ${p.coins} Gold <span>${p.potions} Heiltränke</span></div>${p.inventory.map((i) => `<div class="item-row"><span class="item-rune">${i.type === "weapon" ? "†" : i.type === "book" ? "▤" : i.type === "tool" ? "⚒" : "♜"}</span><div><b>${escape(i.name)}</b><small>${escape(i.desc || `+${i.bonus || 0} ${i.type === "armor" ? "Schutz" : "Schaden"}`)}</small></div><button data-equip="${escape(i.id)}" ${i.equipped || i.type === "tool" ? "disabled" : ""}>${i.equipped ? "Angelegt" : i.type === "book" ? "Lesen" : i.type === "tool" ? "Aktiv" : "Anlegen"}</button></div>`).join("")}<h3>Künste</h3><p class="hint">Die ersten vier liegen auf 1–4. Weitere auf Platz 4 tauschen.</p>${p.unlocked
-      .map((id, i) => {
-        const s = CLASSES[p.kind].skills[id];
-        return `<div class="item-row"><span class="item-rune">${s.icon}</span><div><b>${s.name}</b><small>${s.cost} Mana · ${s.cd}s</small></div>${i < 4 ? `<kbd>${i + 1}</kbd>` : `<button data-swap="${i}">Platz 4</button>`}</div>`;
-      })
+      )}</select></div><p class="note">WASD / Pfeile: Gehen · Shift: Sprinten<br>Leertaste: Schwert · 1–4: Ritterkünste<br>E: Benutzen / Angeln · G: Abbauen · Q: Trank<br>V: Drachenreiten · F: Flöte · Tab: Künste<br>Die Reise pausiert in Menüs.</p><div class="menu-actions"><button id="save-now">[ Speichern ]</button><button id="back-creation">[ Zur Linde ]</button></div><a class="discord" href="https://discord.gg/ego-x" target="_blank" rel="noopener noreferrer">EGOX / Discord ↗</a>`;
+  }
+  if (panel === "journal") {
+    title = "Das Buch eines Eides";
+    body = `<p class="chapter">${esc(objective(p))}</p><p class="story-text">Aurelion, dein Königreich, wurde in einer einzigen Nacht zerstört. Prinzessin Elara floh mit der letzten Wache über den Silberfluss. Unter einer alten Linde hast du geschworen, sie wiederzufinden.</p><ol class="quest-list">${[[p.story.begun, "Ein Eid unter der Linde"], [p.story.elder, "Mit Merin sprechen (51 : 66)"], ...SEALS.map((s) => [p.story.seals.includes(s.id), `${s.name} (${s.x} : ${s.y})`]), [p.story.dragon, "Die Aschengewölbe und ihr Hüter (125 : 114, Rang 4)"], [p.story.flute, "Die Mondglasflöte im Silberfluss finden"], [p.story.arrived, "Jenseits des Nebels fliegen"], [p.story.reunited, "Elara im Garten finden (66 : 51)"]].map(([done, label]) => `<li class="${done ? "done" : ""}"><span>${done ? "[x]" : "[ ]"}</span>${label}</li>`).join("")}</ol><p class="note">Die drei Siegel bringen genug Erfahrung für Rang 4. Im Dungeon erwarten dich zwei Wachen und der Aschenhüter. Nach der Drachenbefreiung findest du die Flöte spätestens beim dritten erfolgreichen Fang. Angeln: auf „Biss“ warten und dann E drücken.</p>`;
+  }
+  if (panel === "inventory") {
+    title = "Was du bei dir trägst";
+    body = `<div class="inventory-grid">${[
+      ["Gold", p.coins],
+      ["Heiltränke", p.potions],
+      ["Silberfische", p.fish],
+      ["Holz", p.wood],
+      ["Stein", p.stone],
+      ["Antikes Holz", p.ancientWood],
+      ["Seltene Erze", p.rareOre],
+    ]
+      .map(([label, n]) => `<span>${label}<b>${n}</b></span>`)
+      .join(
+        "",
+      )}</div><p class="chapter">Ritterschwert +${p.damageBonus} Schaden<br>Schild und Rüstung +${p.armor} Schutz</p><div class="menu-actions"><button id="drink-potion" ${!p.potions || p.hp >= maxHp(p) ? "disabled" : ""}>[ Heiltrank trinken ]</button><button id="eat-fish" ${!p.fish || p.hp >= maxHp(p) ? "disabled" : ""}>[ Fisch essen ]</button></div><p class="note">${p.story.dragon ? "Ascheflügel ist bei dir. V: Auf-/Absteigen." : "Ein Drache schlummert hinter dem letzten Tor."}<br>${p.story.flute ? "Mondglasflöte im Gepäck. F: Flug zwischen den Gebieten." : "Die Mondglasflöte fehlt noch."}</p><div class="arts">${SKILLS.map((s, i) => `<p><span>[ ${i + 1} ] ${s.name}</span><small>${p.level >= s.level ? `${s.cost} Atem / ${s.cd}s` : `Ab Rang ${s.level}`}</small></p>`).join("")}</div>`;
+  }
+  if (panel === "shop") {
+    title = "Nelas kleiner Handel";
+    body = `<p class="story-text">„Ein gutes Schwert hilft. Aber vergiss auf deinem Weg das Ausruhen nicht.“</p><p class="chapter">Dein Gold: ${p.coins}</p>${[
+      ["Heiltrank", "60 Leben", 16],
+      ["Schwert schärfen", "Dauerhaft +5 Schaden", 80],
+      ["Rüstung verstärken", "Dauerhaft +2 Schutz", 65],
+    ]
+      .map(
+        ([name, desc, cost], i) =>
+          `<div class="shop-row"><div><b>${name}</b><small>${desc}</small></div><button data-buy="${i}" ${p.coins < cost ? "disabled" : ""}>[ ${cost} Gold ]</button></div>`,
+      )
       .join("")}`;
   }
-  if (panel === "shop")
-    body = `<p class="prose">„Eine gute Klinge. Ein voller Beutel. Was fehlt dir noch?“</p><div class="inventory-meta">◈ ${p.coins} Gold</div>${SHOP.map((i, n) => `<div class="item-row"><div><b>${i.name}</b><small>${i.desc}</small></div><button data-buy="${n}" ${p.coins < i.price ? "disabled" : ""}>◈ ${i.price}</button></div>`).join("")}`;
-  if (panel === "journal" || panel === "quest")
-    body = `<p class="eyebrow">ELDRIC · DORFÄLTESTER</p><p class="prose">„Jenseits der alten Tore regt sich etwas. Hilf Immerhain, Reisender. Besiege die Wesen in den Wäldern und suche den Segen der Alten.“</p>${[
-      [p.kills, 5, "Feinde besiegen"],
-      [p.chests, 1, "Eine Kiste öffnen"],
-      [p.shrines, 1, "Einen Schrein aktivieren"],
-    ]
-      .map(
-        ([n, goal, title]) =>
-          `<div class="objective ${n >= goal ? "done" : ""}"><span>${n >= goal ? "✓" : "◇"} ${title}</span><b>${Math.min(n, goal)}/${goal}</b></div>`,
-      )
-      .join(
-        "",
-      )}<div class="reward">BELOHNUNG <b>100 Gold</b><b>80 EP</b></div>${panel === "quest" ? `<button class="primary" id="claim-quest" ${p.questClaimed ? "disabled" : ""}>${p.questClaimed ? "Abgeschlossen" : "Belohnung beanspruchen"}</button>` : '<p class="hint">Eldric wartet nordöstlich des Dorfbrunnens.</p>'}`;
-  if (panel === "healer")
+  if (panel === "rest") {
+    title = "Die Bank im Wind";
     body =
-      '<p class="prose">„Ruh dich aus. Der Wald hat noch Licht für dich übrig.“</p><p class="hint">Leben und Mana vollständig auffüllen. Kostenlos.</p><button class="primary" id="heal">Ausruhen →</button>';
-  if (panel === "party")
-    body = `<p class="hint">Vier Spieler insgesamt. Der Host hält die gemeinsame Welt offen.</p>${[...world.players.values()].map((a) => `<div class="item-row"><span class="item-rune">${CLASSES[a.kind].glyph}</span><div><b>${escape(a.name)}</b><small>${CLASSES[a.kind].name} · Level ${a.level}</small></div><small>${a.id === party.playerId ? "DU" : "VERBÜNDET"}</small></div>`).join("")}<p class="network-status">${escape(netStatus)}</p>${party.mode === "solo" ? '<button id="host-party" class="primary">Gruppe erstellen →</button>' : party.mode === "host" ? `<label class="field-label" for="invite-link">EINLADUNGSLINK</label><div class="invite"><input id="invite-link" value="${escape(party.invite)}" readonly/><button id="copy-invite">Kopieren</button></div>` : '<span class="eyebrow">MIT HOST VERBUNDEN</span>'}<p class="hint">Heilung des Elfen wirkt auf lebende Verbündete in Reichweite. Gruppenfortschritt gehört zur Host-Welt; dein Solo-Spielstand bleibt separat. WebRTC kann in restriktiven Netzwerken blockiert sein.</p>${party.mode !== "solo" ? '<button class="secondary" id="leave-party">Gruppe verlassen</button>' : ""}`;
-  if (panel === "map")
-    body = `<p class="hint">768 × 768 Felder · Sechs Siedlungen. Deine Position: ${Math.round(p.x)}, ${Math.round(p.y)}</p><canvas id="large-map" width="512" height="512" aria-label="Weltkarte"></canvas><div class="map-places">${VILLAGES.map((v) => `<span>${v.name}<small>${v.x} : ${v.y}</small></span>`).join("")}</div>`;
-  if (panel === "settings")
-    body = `<div class="setting-row"><label for="volume">Lautstärke</label><input id="volume" type="range" min="0" max="1" step=".05" value="${settings.volume}"/></div><div class="setting-row"><label for="music">Hintergrundmusik</label><input type="checkbox" id="music" ${settings.music ? "checked" : ""}/></div><div class="setting-row"><label for="track">Musikauswahl</label><select id="track">${[["auto", "Nach Region"], ...Object.entries(TRACKS)].map(([key, title]) => `<option value="${key}" ${settings.track === key ? "selected" : ""}>${title}</option>`).join("")}</select></div><div class="setting-row"><label for="motion">Umgebungsanimationen</label><input type="checkbox" id="motion" ${settings.motion ? "checked" : ""}/></div><div class="setting-row"><label for="cycle">ASCII-Zeichen durchcyclen</label><input type="checkbox" id="cycle" ${settings.cycle ? "checked" : ""}/></div><div class="setting-row"><label for="density">Zeichendichte</label><select id="density">${[
-      [2.5, "Sehr fein"],
-      [3.5, "Fein"],
-      [4.5, "Standard"],
-    ]
-      .map(
-        ([v, title]) =>
-          `<option value="${v}" ${settings.density === v ? "selected" : ""}>${title}</option>`,
-      )
-      .join(
-        "",
-      )}</select></div><div class="setting-row"><label for="zoom">Kameraentfernung</label><select id="zoom">${[
-      [1, "Weiter"],
-      [1.25, "Nah"],
-      [1.5, "Sehr nah"],
-    ]
-      .map(
-        ([v, title]) =>
-          `<option value="${v}" ${settings.zoom === v ? "selected" : ""}>${title}</option>`,
-      )
-      .join(
-        "",
-      )}</select></div><h3>Tasten</h3><div class="keybinds">${Object.entries(
-      settings.keys,
-    )
-      .map(
-        ([id, key]) =>
-          `<label>${{ up: "Vorwärts", down: "Rückwärts", left: "Links", right: "Rechts", interact: "Interagieren", gather: "Abbauen", potion: "Heiltrank", inventory: "Inventar", journal: "Journal", party: "Gruppe", map: "Weltkarte" }[id]}<button data-bind="${id}">${escape(key.toUpperCase())}</button></label>`,
-      )
-      .join(
-        "",
-      )}</div><p class="hint">Leertaste: Angriff · 1–4: Fähigkeiten · Shift: Sprinten · Esc: Schließen.<br>Die Welt läuft bei geöffneten Menüs weiter.</p><div class="button-row"><button class="secondary" id="save-now">Speichern</button><button class="secondary" id="return-selection">Charakterauswahl</button></div>`;
+      '<p class="story-text">Du legst das Schwert neben dich. Zwischen den Blumen summt ein leiser Sommer. Die Welt kann einen Augenblick warten.</p><div class="rest-options"><button id="rest-short">[ Eine kleine Rast ]</button><button id="rest-evening">[ Bis zur Nacht bleiben ]</button></div><p class="note">Beide Rasten füllen Leben und Atem vollständig auf. Dein Fortschritt wird gespeichert.</p>';
+  }
+  if (panel === "map") {
+    title = "Wege, die noch vor dir liegen";
+    body =
+      '<canvas id="map-canvas" width="660" height="530" aria-label="ASCII-Reisekarte"></canvas><p class="note">@ Du / V Dorf / * Siegel / D Dungeon / ~ Fluss<br>Welt: 768 × 768 Felder. Die Reisekarte zeigt die besiedelte Anfangsregion.</p>';
+  }
   $("#modal-root").innerHTML =
-    `<div class="scrim"><section class="dialog ${panel === "map" ? "atlas-dialog" : ""}" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><header><span class="eyebrow">EGOX / ${panel.toUpperCase()}</span><button id="close-panel" aria-label="Menü schließen">×</button></header><h2 id="dialog-title">${titles[panel] || "Journal"}</h2><div class="dialog-body">${body}</div><footer><span>ASCII REALMS</span><span><kbd>ESC</kbd> Zurück</span></footer></section></div>`;
+    `<div class="scrim"><section class="paper" role="dialog" aria-modal="true" aria-labelledby="panel-title"><div class="paper-top"><span>+-- DAS REISEBUCH --+</span><button id="close-panel" aria-label="Menü schließen">[ x ]</button></div><h2 id="panel-title">${title}</h2><div class="paper-body">${body}</div><div class="paper-foot">[ Esc ] Zurück auf den Weg</div></section></div>`;
   $("#close-panel").onclick = closePanel;
   $("#close-panel").focus({ preventScroll: true });
   $(".scrim").onclick = (e) => {
     if (e.target.classList.contains("scrim")) closePanel();
   };
-  document
-    .querySelectorAll("[data-equip]")
-    .forEach((b) => (b.onclick = () => action("equip", b.dataset.equip)));
+  if (panel === "settings") {
+    $("#volume").oninput = (e) => {
+      settings.volume = +e.target.value;
+      sound.setVolume(settings.volume);
+      persistSettings();
+    };
+    $("#music").onchange = (e) => {
+      settings.music = e.target.checked;
+      sound.music = settings.music;
+      persistSettings();
+    };
+    $("#track").onchange = (e) => {
+      settings.track = e.target.value;
+      sound.trackMode = settings.track;
+      persistSettings();
+    };
+    for (const id of ["motion", "cycle"])
+      $(`#${id}`).onchange = (e) => {
+        settings[id] = e.target.checked;
+        configureRenderer();
+        persistSettings();
+      };
+    $("#zoom").onchange = (e) => {
+      settings.zoom = +e.target.value;
+      configureRenderer();
+      persistSettings();
+    };
+    $("#save-now").onclick = () => {
+      save();
+      message("Dein Weg ist gespeichert.");
+    };
+    $("#back-creation").onclick = () => {
+      save();
+      closePanel();
+      creation();
+    };
+  }
+  if ($("#drink-potion")) $("#drink-potion").onclick = () => act("potion");
+  if ($("#eat-fish")) $("#eat-fish").onclick = () => act("eat");
   document
     .querySelectorAll("[data-buy]")
-    .forEach((b) => (b.onclick = () => action("buy", +b.dataset.buy)));
-  document
-    .querySelectorAll("[data-swap]")
-    .forEach(
-      (b) => (b.onclick = () => action("swapSkill", [3, +b.dataset.swap])),
-    );
-  if ($("#claim-quest"))
-    $("#claim-quest").onclick = () => {
-      action("quest");
+    .forEach((b) => (b.onclick = () => act("buy", +b.dataset.buy)));
+  if ($("#rest-short"))
+    $("#rest-short").onclick = () => {
       closePanel();
+      act("rest", "short");
     };
-  if ($("#heal"))
-    $("#heal").onclick = () => {
-      action("heal");
+  if ($("#rest-evening"))
+    $("#rest-evening").onclick = () => {
       closePanel();
+      act("rest", "evening");
     };
-  if ($("#host-party"))
-    $("#host-party").onclick = async (e) => {
-      e.target.disabled = true;
-      await party.host();
-      if (panel === "party") renderPanel();
-    };
-  if ($("#copy-invite"))
-    $("#copy-invite").onclick = async () => {
-      try {
-        await navigator.clipboard.writeText(party.invite);
-        toast("Einladungslink kopiert.");
-      } catch {
-        $("#invite-link").select();
-        toast("Mit Strg+C kopieren.");
-      }
-    };
-  if ($("#leave-party"))
-    $("#leave-party").onclick = () => {
-      const guest = party.mode === "guest";
-      party.leave();
-      if (guest) restore();
-      renderer.world = world;
-      netStatus = "Du bist wieder in deiner eigenen Welt.";
-      renderPanel();
-    };
-  if (panel === "settings") wireSettings();
-  if (panel === "map") drawMap(p);
+  if (panel === "map") drawMap();
 }
-function wireSettings() {
-  $("#volume").oninput = (e) => {
-    settings.volume = +e.target.value;
-    sound.start();
-    sound.setVolume(settings.volume);
-    persist();
-  };
-  $("#music").onchange = (e) => {
-    settings.music = e.target.checked;
-    sound.music = settings.music;
-    persist();
-  };
-  $("#track").onchange = (e) => {
-    settings.track = e.target.value;
-    sound.trackMode = settings.track;
-    persist();
-  };
-  for (const id of ["motion", "cycle"])
-    $(`#${id}`).onchange = (e) => {
-      settings[id] = e.target.checked;
-      rendererSettings();
-      persist();
-    };
-  for (const id of ["density", "zoom"])
-    $(`#${id}`).onchange = (e) => {
-      settings[id] = +e.target.value;
-      rendererSettings();
-      persist();
-    };
-  $("#save-now").onclick = () => {
-    save();
-    toast(
-      party.mode === "guest"
-        ? "Dein Solo-Spielstand bleibt erhalten."
-        : "Spielstand gespeichert.",
-    );
-  };
-  $("#return-selection").onclick = () => {
-    save();
-    party.leave();
-    closePanel();
-    selection();
-  };
-  document.querySelectorAll("[data-bind]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        b.textContent = "…";
-        document.addEventListener(
-          "keydown",
-          (e) => {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            const key = e.key.toLowerCase();
-            if (
-              key.length === 1 &&
-              /[a-zäöü]/.test(key) &&
-              (!Object.values(settings.keys).includes(key) ||
-                settings.keys[b.dataset.bind] === key)
-            ) {
-              settings.keys[b.dataset.bind] = key;
-              persist();
-            } else if (key !== "escape")
-              toast("Wähle eine freie Buchstabentaste.");
-            b.textContent = settings.keys[b.dataset.bind].toUpperCase();
-          },
-          { capture: true, once: true },
-        );
-      }),
-  );
-}
-function drawMap(p) {
-  const canvas = $("#large-map"),
-    ctx = canvas.getContext("2d"),
-    s = 512 / WORLD_SIZE;
-  ctx.fillStyle = "#111b20";
-  ctx.fillRect(0, 0, 512, 512);
-  for (let y = 0; y < WORLD_SIZE; y += 3)
-    for (let x = 0; x < WORLD_SIZE; x += 3) {
-      ctx.fillStyle = {
-        water: "#5e8a95",
-        snow: "#8a9b9e",
-        marsh: "#395d54",
-        ruins: "#767e72",
-        path: "#aaa080",
-        grass: "#354b37",
-        wall: "#18211c",
-      }[terrain(x, y)];
-      ctx.fillRect(x * s, y * s, 3 * s + 0.5, 3 * s + 0.5);
+function drawMap() {
+  const p = world.player,
+    c = $("#map-canvas"),
+    ctx = c.getContext("2d");
+  ctx.fillStyle = "#17251e";
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.font = '11px "Courier New",monospace';
+  for (let row = 0; row < 48; row++) {
+    let line = "";
+    for (let col = 0; col < 80; col++) {
+      const x = col * 2,
+        y = row * 3;
+      line +=
+        terrain(x, y) === "water"
+          ? "~"
+          : terrain(x, y) === "path"
+            ? ":"
+            : treeAt(x, y)
+              ? "^"
+              : ".";
     }
-  ctx.font = "10px monospace";
-  for (const v of VILLAGES) {
-    ctx.fillStyle = "#ddc58e";
-    ctx.fillRect(v.x * s - 2, v.y * s - 2, 4, 4);
-    ctx.fillText(v.name, v.x * s + 5, v.y * s);
+    ctx.fillStyle = row % 2 ? "#7a9270" : "#617e62";
+    ctx.fillText(line, 10, 15 + row * 10);
   }
-  ctx.fillStyle = "#fff";
-  ctx.beginPath();
-  ctx.arc(p.x * s, p.y * s, 4, 0, Math.PI * 2);
-  ctx.fill();
+  for (const v of VILLAGES) {
+    ctx.fillStyle = "#d0c398";
+    ctx.fillText(`V ${v.name}`, (v.x / 2) * 6.6 + 10, (v.y / 3) * 10 + 15);
+  }
+  for (const s of SEALS) {
+    ctx.fillStyle = p.story.seals.includes(s.id) ? "#607963" : "#e4cd9e";
+    ctx.fillText("*", (s.x / 2) * 6.6 + 10, (s.y / 3) * 10 + 15);
+  }
+  ctx.fillStyle = "#d0a68a";
+  ctx.fillText("D", (DUNGEON.x / 2) * 6.6 + 10, (DUNGEON.y / 3) * 10 + 15);
+  if (p.area === "vale") {
+    ctx.fillStyle = "#fff1c8";
+    ctx.fillText("@", (p.x / 2) * 6.6 + 10, (p.y / 3) * 10 + 15);
+  } else {
+    ctx.fillStyle = "#e0d5ac";
+    ctx.fillText(
+      p.area === "isle"
+        ? "Du bist jenseits des Nebels."
+        : "Du bist in den Aschengewölben.",
+      20,
+      510,
+    );
+  }
 }
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Tab" && panel) {
-    const nodes = [
-        ...document.querySelectorAll(
-          ".dialog button:not(:disabled),.dialog input,.dialog select",
-        ),
-      ],
-      first = nodes[0],
-      end = nodes.at(-1);
+  const key = e.key.toLowerCase();
+  if (mode === "intro" && key === "enter") {
+    e.preventDefault();
+    window.skipIntro?.();
+    return;
+  }
+  if (mode !== "game" || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (
+    ["INPUT", "SELECT"].includes(document.activeElement?.tagName) &&
+    key !== "escape"
+  )
+    return;
+  if (key === "tab" && panel) {
+    const focusables = [
+      ...document.querySelectorAll(
+        ".paper button:not(:disabled),.paper input,.paper select",
+      ),
+    ];
+    const first = focusables[0],
+      end = focusables.at(-1);
     if (e.shiftKey && document.activeElement === first) {
       e.preventDefault();
       end?.focus();
@@ -890,101 +553,107 @@ document.addEventListener("keydown", (e) => {
     }
     return;
   }
-  if (
-    ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName) &&
-    e.key !== "Escape"
-  )
-    return;
-  if (screen === "selection") {
-    if (e.key === "ArrowLeft") {
+  if (world.cinematic) {
+    if (key === "enter" || key === "escape") {
       e.preventDefault();
-      cycleClass(-1);
-    }
-    if (e.key === "ArrowRight") {
-      e.preventDefault();
-      cycleClass(1);
+      act("skip-cinematic");
     }
     return;
   }
-  if (screen !== "game" || e.ctrlKey || e.metaKey || e.altKey) return;
-  const key = e.key.toLowerCase(),
-    m = settings.keys;
+  if (dialogue) {
+    if (["e", "enter", " "].includes(key) && !e.repeat) {
+      e.preventDefault();
+      nextDialogue();
+    }
+    return;
+  }
   if (key === "escape") {
     e.preventDefault();
     panel ? closePanel() : openPanel("settings");
     return;
   }
-  if (!e.repeat) {
-    const destination = Object.keys(symbol).find((id) => m[id] === key);
-    if (destination) {
-      e.preventDefault();
-      openPanel(destination);
-      return;
-    }
+  if (!e.repeat && ["i", "j", "m"].includes(key)) {
+    e.preventDefault();
+    openPanel({ i: "inventory", j: "journal", m: "map" }[key]);
+    return;
   }
   if (panel) return;
   if (
     [
-      m.up,
-      m.down,
-      m.left,
-      m.right,
+      "w",
+      "a",
+      "s",
+      "d",
       "arrowup",
-      "arrowdown",
       "arrowleft",
+      "arrowdown",
       "arrowright",
-      " ",
       "shift",
+      " ",
+      "g",
+      "tab",
     ].includes(key)
   ) {
     e.preventDefault();
     keys[key] = true;
   }
   if (!e.repeat) {
-    if (key === " ") action("attack");
-    if (key === m.interact) action("interact");
-    if (key === m.gather) action("gather");
-    if (key === m.potion) action("potion");
-    if (/^[1-4]$/.test(key)) action("skill", +key - 1);
+    if (key === " ") act("attack");
+    if (key === "e") act("interact");
+    if (key === "g") act("gather");
+    if (key === "q") act("potion");
+    if (key === "v") act("mount");
+    if (key === "f") act("flute");
+    if (key === "r") act("respawn");
+    if (/^[1-4]$/.test(key)) act("skill", +key - 1);
   }
 });
 document.addEventListener("keyup", (e) => (keys[e.key.toLowerCase()] = false));
-window.addEventListener("blur", () => (keys = {}));
+window.addEventListener("blur", () => {
+  keys = {};
+  if (mode === "game") world.player.input = {};
+});
 window.addEventListener("beforeunload", save);
 function loop(ms) {
   const dt = Math.min((ms - last) / 1000 || 0.016, 0.05);
   last = ms;
-  if (screen === "selection") {
+  if (mode === "creation") {
     world.time += dt;
-    renderer?.draw(null, dt);
-    sound.tick(world.time, "clear", "", screen);
+    renderer?.draw(dt, "creation");
+    sound.tick(world.time, "clear", "", mode);
   }
-  if (screen === "game") {
-    const p = player(),
-      m = settings.keys,
-      input = {
-        up: !!(keys[m.up] || keys.arrowup),
-        down: !!(keys[m.down] || keys.arrowdown),
-        left: !!(keys[m.left] || keys.arrowleft),
-        right: !!(keys[m.right] || keys.arrowright),
-        sprint: !!keys.shift,
-      };
-    if (p && party.mode !== "guest") p.input = panel ? {} : input;
-    if (party.mode !== "guest") world.update(dt);
-    if (keys[" "] && !panel) action("attack");
-    if (keys[m.gather] && !panel) action("gather");
-    party.tick(ms / 1000, panel ? {} : input);
-    renderer.draw(p, dt);
-    sound.tick(world.time, world.weather, p ? zone(p.x, p.y) : "", screen);
-    uiTime += dt;
-    saveTime += dt;
-    if (uiTime > 0.1) {
-      updateUI();
-      uiTime = 0;
+  if (mode === "game") {
+    world.player.input =
+      panel || dialogue || world.cinematic
+        ? {}
+        : {
+            up: !!(keys.w || keys.arrowup),
+            down: !!(keys.s || keys.arrowdown),
+            left: !!(keys.a || keys.arrowleft),
+            right: !!(keys.d || keys.arrowright),
+            sprint: !!keys.shift,
+          };
+    if (!panel && !dialogue) world.update(dt);
+    if (!panel && !dialogue && !world.cinematic) {
+      if (keys[" "]) act("attack");
+      if (keys.g) act("gather");
     }
-    if (saveTime > 10) {
+    renderer.draw(dt);
+    sound.tick(
+      world.time,
+      world.weather,
+      world.player.area === "dungeon" ? "Frostkamm" : zone(world.player),
+      mode,
+    );
+    uiTimer += dt;
+    saveTimer += dt;
+    if (uiTimer > 0.07) {
+      updateUI();
+      uiTimer = 0;
+    }
+    if (saveTimer > 8) {
       save();
-      saveTime = 0;
+      saveTimer = 0;
     }
   }
   requestAnimationFrame(loop);

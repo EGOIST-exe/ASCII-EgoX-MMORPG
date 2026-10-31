@@ -1,6 +1,6 @@
 {
   "name": "egox-ascii-realms",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,13 +9,12 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/*.test.js"
   },
-  "dependencies": {
-    "peerjs": "^1.5.5",
-    "three": "^0.187.0"
-  },
   "devDependencies": {
     "@playwright/test": "^1.56.1",
     "ffmpeg-static": "^5.2.0",
     "vite": "^6.4.1"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
   }
 }
