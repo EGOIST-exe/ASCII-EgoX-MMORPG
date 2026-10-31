@@ -386,6 +386,33 @@ button {
     #0d1918
   );
 }
+.in-cinematic::before,
+.in-cinematic::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 7%;
+  background: #070a0c;
+  z-index: 2;
+  pointer-events: none;
+}
+.in-cinematic::before {
+  top: 0;
+}
+.in-cinematic::after {
+  bottom: 0;
+}
+.film-intro #cinematic-copy::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #080d10;
+  opacity: var(--film-fade, 0);
+}
+.film-intro #cinematic-copy {
+  z-index: 3;
+}
 #cinematic-title {
   position: absolute;
   left: 10%;

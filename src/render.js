@@ -1,3 +1,18 @@
+import {
+  BRIDGES,
+  bridgeHeight,
+  meadowProfile,
+  pathInfo,
+  riverCenter,
+} from "./landscape.js";
+import { visibleGroundBounds, chunkPlan } from "./view-distance.js";
+import { filmShotAt } from "./cinematography.js";
+import {
+  bridgeModel,
+  campfireModel,
+  waysideModel,
+  filmSet,
+} from "./environment-models.js";
 import * as T from "three";
 import {
   DAY_LENGTH,
@@ -35,24 +50,32 @@ uniform float clock;uniform float daylight;uniform float glyphSize;uniform float
 varying vec3 vColor;varying float vGlyph;varying float vFacing;varying vec3 vWorld;
 void main(){
   vec4 world=modelMatrix*vec4(position,1.);vec3 n=normalize(mat3(modelMatrix)*normal);
-  if(mode==1.){vec2 diff=world.xz-focus.xz;float push=1.-smoothstep(.2,1.3,length(diff));world.xz+=normalize(diff+vec2(.001))*push*plant*.65;world.y-=push*plant*.12;world.x+=sin(clock*1.5+world.z*2.)*plant*.11*motion;}
+  if(mode==1.){vec2 diff=world.xz-focus.xz;float push=1.-smoothstep(.15,1.35,length(diff));float wind=sin(clock*1.7+world.z*.65)+sin(clock*.8+world.x*.9)*.5;world.xz+=normalize(diff+vec2(.001))*push*plant*.85;world.y-=push*plant*.52;world.x+=wind*plant*plant*.18*motion;world.z+=cos(clock*1.2+world.x*.5)*plant*.09*motion;}
   if(mode==3.){world.x+=sin(clock*.8+world.z*.4)*.06*motion;}
   if(mode==5.){world.y+=sin(clock*1.3+jitter*40.)*.25;world.x+=sin(clock*.7+jitter*30.)*.2;}if(mode==7.)world.y=mod(world.y-clock*12.,17.);if(mode==4.){vec2 diff=world.xz-focus.xz;world.xz+=normalize(diff+vec2(.001))*(1.-smoothstep(.3,1.5,length(diff)))*.3;}
-  vec3 sun=normalize(vec3(-.6,1.,.35));float directional=max(0.,dot(n,sun));float illumination=.23+daylight*(.23+directional*.65);
+  if(mode==8.){world.x+=sin(clock*4.+position.y*6.+jitter*12.)*.06;world.y+=sin(clock*7.+jitter*10.)*.055;}if(mode==9.){world.y+=mod(clock*.65+jitter*3.,3.);world.x+=sin(clock+jitter*80.)*.18;}
+  vec3 sun=normalize(vec3(-.6,1.,.35));float directional=max(0.,dot(n,sun));float illumination=.29+daylight*(.28+directional*.65);
   vec3 color=baseColor*tint;vec3 glow=vec3(0.);for(int i=0;i<8;i++){float lamp=pow(max(0.,1.-distance(world.xyz,lamps[i])/6.),2.);glow+=vec3(1.,.78,.34)*lamp*(1.-daylight)*1.9;}
-  if(mode==2.){float wave=sin(world.z*7.+world.x*4.+clock*1.4*motion);world.y+=wave*.015;float clouds=smoothstep(1.1,1.7,sin(world.x*.4+clock*.025)+cos(world.z*.32-clock*.04));float rx=94.+sin(world.z/22.)*7.+sin(world.z/49.)*9.;float moon=1.-smoothstep(.6,1.5,length(vec2((world.x-rx)*1.1,(world.z-focus.z-5.)*.5)));color=mix(vec3(.3,.48,.55),vec3(.8,.88,.85),clouds*daylight*.65+moon*(1.-daylight)*.9);illumination=.45+daylight*.4;}
+  float waterWave=sin(world.z*3.8+world.x*2.1-clock*2.4)*.055+cos(world.x*6.2-world.z*1.7+clock*1.8)*.028;
+  if(reflected>.5){world.x+=sin(world.z*3.8-clock*2.4)*.085*motion;world.z+=cos(world.x*6.2+clock*1.8)*.055*motion;}
+  if(mode==2.){float rx=94.+sin(world.z/22.)*7.+sin(world.z/49.)*9.;float bank=abs(world.x-rx);float dist=length(world.xz-focus.xz);float ripples=sin(dist*12.-clock*5.)*exp(-dist*.42)*.055;world.y+=(waterWave+ripples)*motion;
+    float clouds=smoothstep(.6,1.55,sin(world.x*.43+clock*.03)+cos(world.z*.31-clock*.055)+sin(world.z*.12+world.x*.2)*.3);
+    float moon=exp(-pow((world.x-rx)*1.1+waterWave*4.,2.))*exp(-pow((world.z-focus.z-5.)*.22,2.));
+    float shimmer=pow(max(0.,sin(world.z*19.-clock*2.+world.x*5.)),12.);float foam=smoothstep(2.65,3.2,bank)*(.5+.5*sin(world.z*9.-clock*3.));
+    color=mix(vec3(.25,.48,.55),vec3(.86,.95,.95),clouds*daylight*.65+moon*(1.-daylight)*.95);color+=vec3(.55,.7,.68)*(shimmer*.65+foam*.85);illumination=.65+daylight*.35;
+  }
   color=color*illumination+glow*.46+baseColor*emission*(.25+(1.-daylight)*.9);color*=.82+jitter*.32;
   vWorld=world.xyz;vFacing=mode==1.||mode==2.?1.:dot(n,normalize(cameraPosition-world.xyz));
   float rate=mode==2.?13.:mode==1.?7.:mode==3.?9.:6.;vGlyph=family+mod(floor(jitter*8.)+floor(clock*rate)*cycle,8.);
-  if(mode==5.)color*=.6+sin(clock*1.8+jitter*80.)*.4;vColor=color;vec4 mv=viewMatrix*world;float fog=1.-smoothstep(38.,88.,-mv.z);vColor*=fog;
-  gl_Position=projectionMatrix*mv;gl_PointSize=glyphSize*clamp(25./max(1.,-mv.z),.65,1.2);
+  if(mode==5.)color*=.6+sin(clock*1.8+jitter*80.)*.4;vColor=color;vec4 mv=viewMatrix*world;float fog=1.-smoothstep(85.,190.,-mv.z);vColor*=fog;
+  gl_Position=projectionMatrix*mv;gl_PointSize=glyphSize*(mode==2.?1.35:1.)*clamp(25./max(1.,-mv.z),.65,1.2);
 }`;
 const fragment = `
 uniform sampler2D atlas;uniform float reflected;uniform float sceneArea;uniform vec3 focus;uniform float mode;
 varying vec3 vColor;varying float vGlyph;varying float vFacing;varying vec3 vWorld;
 void main(){
   if(vFacing<-.03)discard;
-  if(reflected>.5){vec3 ray=vWorld-cameraPosition;float f=(-.25-cameraPosition.y)/ray.y;vec3 hit=cameraPosition+ray*f;float rx=94.+sin(hit.z/22.)*7.+sin(hit.z/49.)*9.;if(sceneArea<.5&&(abs(hit.x-rx)>3.1||abs(hit.z-70.)<1.8))discard;if(sceneArea>1.5)discard;}
+  if(reflected>.5){vec3 ray=vWorld-cameraPosition;float f=(-.25-cameraPosition.y)/ray.y;vec3 hit=cameraPosition+ray*f;float rx=94.+sin(hit.z/22.)*7.+sin(hit.z/49.)*9.;if(sceneArea<.5&&abs(hit.x-rx)>3.15)discard;if(sceneArea>1.5)discard;}
   if(mode==3.){float fade=(1.-smoothstep(2.,4.,abs(vWorld.x-focus.x)))*smoothstep(-1.,1.,vWorld.z-focus.z)*(1.-smoothstep(9.,14.,vWorld.z-focus.z));if(fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5)<fade*.91)discard;}
   vec2 tile=vec2(mod(vGlyph,16.),floor(vGlyph/16.));vec2 uv=vec2((tile.x+gl_PointCoord.x)/16.,1.-(tile.y+gl_PointCoord.y)/4.);float ink=texture2D(atlas,uv).r;if(ink<.25)discard;
   vec3 col=vColor;if(reflected>.5)col=mix(col,vec3(.16,.3,.37),.5)*.64;
@@ -106,7 +129,7 @@ export class Renderer {
     this.gl.outputColorSpace = T.LinearSRGBColorSpace;
     this.scene = new T.Scene();
     this.scene.background = new T.Color("#080e16");
-    this.viewCamera = new T.PerspectiveCamera(43, 1, 0.1, 130);
+    this.viewCamera = new T.PerspectiveCamera(43, 1, 0.1, 240);
     this.atlas = atlasTexture();
     this.shared = {
       clock: { value: 0 },
@@ -151,6 +174,9 @@ export class Renderer {
       rain: ["#adc3cb", 24, 0.05, 7],
       ore: ["#9ad6d0", 40, 0.6, 6],
       cloud: ["#a1b5bd", 48, 0.2, 0],
+      fire: ["#ffbb61", 40, 1.2, 8],
+      ember: ["#e87d42", 40, 0.95, 8],
+      spark: ["#e87d42", 40, 1.1, 9],
     };
     for (const [name, def] of Object.entries(defs))
       this.m[name] = this.makeMaterial(name, ...def);
@@ -228,6 +254,12 @@ export class Renderer {
     this.fishingLine = null;
     this.bobber = null;
     this.ambientRoot = null;
+    this.campRoot = null;
+    this.campKey = null;
+    this.filmId = null;
+    this.swordTrail = null;
+    this.trailSamples = [];
+    this.viewPlanKey = null;
   }
   scatter(parent, data, mat) {
     const geo = new T.BufferGeometry(),
@@ -275,182 +307,347 @@ export class Renderer {
     this.reflections.push({ root, mirror, clone });
     return mirror;
   }
-  patch(cx, cz, area = "vale", small = false) {
+  patch(cx, cz, area = "vale", small = false, lod = 0) {
     const group = new T.Group(),
       grass = [],
       water = [],
       flowers = [],
-      ground = [];
-    const size = 12,
-      step = small ? 0.29 : 0.39;
-    const startX = cx * size,
-      startZ = cz * size;
-    for (let z = startZ; z < startZ + size; z += step)
-      for (let x = startX; x < startX + size; x += step) {
+      ground = [],
+      details = [],
+      foliage = [];
+    const step = small ? 0.23 : lod === 0 ? 0.22 : lod === 1 ? 0.42 : 0.8,
+      startX = cx * 12,
+      startZ = cz * 12;
+    for (let z = startZ; z < startZ + 12; z += step)
+      for (let x = startX; x < startX + 12; x += step) {
         const rx = Math.round(x),
           rz = Math.round(z),
-          type = terrain(rx, rz, area),
+          type = terrain(x, z, area),
           h = elevation(x, z, area),
-          n = hash(Math.floor(x * 19), Math.floor(z * 19), 22);
+          n = hash(Math.floor(x * 131), Math.floor(z * 131), 22);
         if (type === "water") {
+          const bank = Math.abs(x - riverCenter(z));
           water.push({ x, y: -0.25, z, r: n });
+          if (lod < 2)
+            water.push({
+              x: x + step * 0.5,
+              y: -0.25,
+              z: z + step * 0.5,
+              r: 1 - n,
+            });
+          if (lod === 0 && bank > 2.7 && n > 0.56) {
+            for (let k = 0; k < 6; k++)
+              grass.push({
+                x: x + (n - 0.5) * 0.08,
+                y: -0.12 + k * 0.17,
+                z,
+                plant: k / 5,
+                r: n,
+                tint: [0.8, 0.9, 0.48],
+              });
+          }
           continue;
         }
-        if (type === "wall") continue;
-        if (type === "path" || type === "stone") {
-          ground.push({
+        if (type === "wall" || type === "bridge") continue;
+        const road = type === "path",
+          mountain = type === "mountain";
+        if (area === "vale" && Math.abs(x - riverCenter(z)) < 3.65 && lod < 2) {
+          const side = Math.sign(x - riverCenter(z));
+          for (let y = -0.3; y < h; y += 0.15)
+            details.push({
+              x: x - side * (h - y) * 0.12,
+              y,
+              z,
+              r: n,
+              tint: [0.55, 0.65, 0.51],
+              nx: -side,
+              ny: 0.3,
+            });
+        }
+        ground.push({
+          x,
+          y: h + 0.015,
+          z,
+          r: n,
+          tint: road
+            ? [1.07, 0.95, 0.72]
+            : mountain
+              ? [0.69, 0.75, 0.75]
+              : type === "stone"
+                ? [0.85, 0.93, 0.92]
+                : [0.38, 0.58, 0.36],
+        });
+        // Terrace faces and rocky mountain slopes fill the space between height contours.
+        if (lod < 2) {
+          const next = elevation(x + step, z, area),
+            drop = h - next;
+          if (Math.abs(drop) > 0.2)
+            for (let y = Math.min(h, next); y < Math.max(h, next); y += 0.16)
+              details.push({
+                x: x + step * 0.5,
+                y,
+                z,
+                r: n,
+                tint: [0.6, 0.69, 0.55],
+                nx: 1,
+                ny: 0,
+              });
+        }
+        if (road) {
+          if (lod === 0) {
+            const info = pathInfo(x, z),
+              rut = Math.abs(info.distance - 0.58) < 0.1;
+            if (n > 0.42)
+              details.push({
+                x: x + (n - 0.5) * 0.1,
+                y: h + 0.045 + (rut ? -0.04 : n * 0.07),
+                z,
+                r: n,
+                tint: rut ? [0.55, 0.54, 0.4] : [0.9, 0.91, 0.77],
+              });
+            if (n > 0.65 && !rut) {
+              for (let k = 0; k < 7; k++) {
+                const angle = (k * Math.PI) / 3;
+                details.push({
+                  x: x + Math.cos(angle) * 0.09,
+                  y: h + 0.04 + Math.sin(k * 0.5) * 0.06,
+                  z: z + Math.sin(angle) * 0.09,
+                  r: n,
+                  tint: [0.9, 0.92, 0.82],
+                  nx: Math.cos(angle) * 0.5,
+                  ny: 0.7,
+                  nz: Math.sin(angle) * 0.5,
+                });
+              }
+            }
+            if (info.distance > info.width - 0.2 && n > 0.66)
+              for (let k = 0; k < 9; k++) {
+                const angle = k * Math.PI * 0.75;
+                details.push({
+                  x: x + Math.cos(angle) * 0.15,
+                  y: h + 0.07 + (k % 3) * 0.065,
+                  z: z + Math.sin(angle) * 0.15,
+                  r: n,
+                  tint: [0.8, 0.85, 0.76],
+                  nx: Math.cos(angle) * 0.5,
+                  ny: 0.6,
+                  nz: Math.sin(angle) * 0.5,
+                });
+              }
+          }
+          continue;
+        }
+        if (mountain) {
+          if (lod < 2 && n > 0.77)
+            details.push({
+              x,
+              y: h + 0.13,
+              z,
+              r: n,
+              tint: h > 22 ? [1.05, 1.12, 1.1] : [0.67, 0.77, 0.75],
+            });
+          continue;
+        }
+        if (type === "stone") continue;
+        const profile = meadowProfile(x, z),
+          j = (n - 0.5) * step * 0.95,
+          jz =
+            (hash(Math.floor(x * 139), Math.floor(z * 137), 91) - 0.5) *
+            step *
+            0.95,
+          height = 0.3 + n * 0.32 + profile.tall * (0.35 + n * 0.55),
+          stages = lod === 0 ? 5 : lod === 1 ? 3 : 1;
+        for (let k = 1; k <= stages; k++) {
+          const f = k / stages;
+          grass.push({
+            x: x + j + Math.sin(n * 30) * f * 0.06,
+            y: h + height * f,
+            z: z + jz,
+            plant: f,
+            r: n,
+            tint: [
+              0.55 + n * 0.35 + profile.field * 0.12,
+              0.8 + n * 0.3,
+              0.46 + n * 0.25,
+            ],
+          });
+        }
+        if (lod < 2 && n > 1 - profile.flower * 0.28) {
+          const species = profile.species,
+            colors = [
+              [1.55, 0.7, 1.35],
+              [1.65, 1.45, 0.5],
+              [1.5, 1.5, 1.55],
+              [0.85, 0.85, 1.75],
+              [1.75, 0.85, 0.55],
+            ],
+            heightF = 0.35 + n * 0.45;
+          for (let k = 1; k <= 3; k++)
+            grass.push({
+              x,
+              y: h + (heightF * k) / 3,
+              z,
+              plant: k / 3,
+              r: n,
+              tint: [0.5, 0.9, 0.4],
+            });
+          for (let k = 0; k < (lod === 0 ? 6 : 3); k++) {
+            const angle = (k * Math.PI) / 3;
+            flowers.push({
+              x: x + Math.cos(angle) * 0.08,
+              y: h + heightF + Math.sin(k * 1.3) * 0.025,
+              z: z + Math.sin(angle) * 0.08,
+              plant: 0.65,
+              r: n,
+              tint: colors[species],
+            });
+          }
+          flowers.push({
             x,
-            y: h + 0.025,
+            y: h + heightF + 0.035,
             z,
             r: n,
-            tint: type === "path" ? [1.1, 0.99, 0.78] : [0.85, 0.95, 0.95],
+            tint: [1.8, 1.5, 0.6],
           });
-          continue;
         }
-        ground.push({ x, y: h, z, r: n, tint: [0.37, 0.52, 0.4] });
-        const tall = 0.16 + n * 0.38;
-        for (let i = 0; i < 3; i++)
-          grass.push({
-            x: x + (n - 0.5) * 0.2,
-            y: h + (tall * i) / 3,
-            z: z + (n - 0.5) * 0.2,
-            r: n + i * 0.13,
-            plant: i / 3,
-            tint: [0.7 + n * 0.25, 0.92 + n * 0.18, 0.64 + n * 0.28],
-          });
-        if (n > 0.94) {
-          const col =
-            n > 0.985
-              ? [1.3, 0.95, 1.2]
-              : n > 0.97
-                ? [1.35, 1.25, 0.8]
-                : [1.05, 1.18, 1.3];
-          for (let i = 0; i < 5; i++)
-            flowers.push({
-              x: x + Math.sin(i * 1.256) * 0.055,
-              y: h + 0.38,
-              z: z + Math.cos(i * 1.256) * 0.055,
-              r: n,
-              tint: col,
-            });
-        }
-        const next = elevation(x, z + 0.3, area);
-        if (h - next > 0.18)
-          for (let y = next; y < h; y += 0.11)
-            ground.push({
-              x,
-              y,
-              z: z + 0.18,
-              ny: 0,
-              nz: 1,
-              r: n,
-              tint: [0.75, 0.75, 0.63],
-            });
       }
     this.scatter(group, ground, this.m.stone);
+    this.scatter(group, details, this.m.stone);
     this.scatter(group, grass, this.m.grass);
-    this.scatter(group, flowers, this.m.flower);
     this.scatter(group, water, this.m.water);
-    if (area === "vale" || area === "isle")
-      for (let z = startZ; z < startZ + size; z++)
-        for (let x = startX; x < startX + size; x++) {
-          if (treeAt(x, z, area)) {
-            const root = treeModel(this.m, Math.floor(hash(x, z, 11) * 3));
-            root.position.set(x, elevation(x, z, area), z);
-            root.userData.resource = `${area}:tree:${x}:${z}`;
-            group.add(root);
-            if (Math.abs(x - riverX(z)) < 9) {
-              const absoluteRoot = root.clone(true);
-              this.scene.add(absoluteRoot);
-              const mir = this.mirror(absoluteRoot);
-              this.scene.remove(absoluteRoot);
-              mir.userData.resource = root.userData.resource;
+    this.scatter(group, flowers, this.m.flower);
+    for (let z = startZ; z < startZ + 12; z++)
+      for (let x = startX; x < startX + 12; x++) {
+        const h = elevation(x, z, area),
+          type = terrain(x, z, area);
+        if (treeAt(x, z, area)) {
+          if (lod < 2) {
+            const tree = treeModel(this.m, Math.floor(hash(x, z, 11) * 3));
+            tree.position.set(x, h, z);
+            tree.userData.resource = area + ":tree:" + x + ":" + z;
+            group.add(tree);
+            if (Math.abs(x - riverCenter(z)) < 8) {
+              const mirror = this.mirror(tree);
+              mirror.userData.chunk = group;
+              mirror.userData.resource = tree.userData.resource;
+            }
+          } else {
+            for (let k = 0; k < 110; k++) {
+              const n = hash(x * 111 + k, z),
+                u = hash(k, z, 43),
+                angle = n * 6.283,
+                r = Math.sqrt(u) * 1.8;
+              foliage.push({
+                x: x + Math.cos(angle) * r,
+                y: h + 3.2 + hash(k, x, 41) * 2.8,
+                z: z + Math.sin(angle) * r,
+                r: n,
+                tint: [0.7, 0.9, 0.65],
+              });
             }
           }
-          if (rockAt(x, z, area)) {
-            const rock = new T.Group();
+        } else if (rockAt(x, z, area) && lod < 2) {
+          const rock = new T.Group();
+          points(
+            rock,
+            this.m.stone,
+            "ellipsoid",
+            [0, 0.3, 0],
+            [0.55, 0.4, 0.45],
+            [0, 0, 0],
+            0.14,
+          );
+          points(
+            rock,
+            this.m.ore,
+            "ellipsoid",
+            [0.25, 0.4, 0.3],
+            [0.06, 0.1, 0.035],
+            [0, 0, 0],
+            0.035,
+          );
+          rock.position.set(x, h, z);
+          rock.userData.resource = area + ":rock:" + x + ":" + z;
+          group.add(rock);
+        } else if (
+          lod === 0 &&
+          hash(x, z, 65) > 0.965 &&
+          !["water", "path", "bridge", "mountain"].includes(type)
+        ) {
+          const bush = new T.Group();
+          for (let i = 0; i < 3; i++)
             points(
-              rock,
-              this.m.stone,
+              bush,
+              this.m.bush,
               "ellipsoid",
-              [0, 0.25, 0],
-              [0.55, 0.4, 0.45],
-              [0, 0.2, 0],
-              0.11,
-            );
-            points(
-              rock,
-              this.m.moss,
-              "ellipsoid",
-              [0.25, 0.13, 0.2],
-              [0.28, 0.18, 0.3],
+              [Math.sin(i * 2) * 0.24, 0.4, Math.cos(i * 2) * 0.24],
+              [0.4, 0.5, 0.4],
               [0, 0, 0],
-              0.11,
+              0.13,
             );
-            rock.position.set(x, elevation(x, z, area), z);
-            for (let i = 0; i < 4; i++)
-              points(
-                rock,
-                this.m.ore,
-                "ellipsoid",
-                [0.25 + Math.sin(i * 2) * 0.12, 0.32 + i * 0.045, 0.3],
-                [0.035, 0.05, 0.03],
-                [0, 0, 0],
-                0.035,
-              );
-            rock.userData.resource = `${area}:rock:${x}:${z}`;
-            group.add(rock);
-          }
+          bush.position.set(x, h, z);
+          group.add(bush);
+        }
+        if (
+          lod === 0 &&
+          type !== "water" &&
+          type !== "mountain" &&
+          hash(x, z, 217) > 0.985
+        ) {
+          const info = pathInfo(x, z);
           if (
-            hash(x, z, 65) > 0.975 &&
-            !treeAt(x, z, area) &&
-            !["water", "path"].includes(terrain(x, z, area))
+            info.distance > info.width + 0.5 &&
+            info.distance < info.width + 1.5
           ) {
-            const bush = new T.Group();
-            for (let i = 0; i < 3; i++)
-              points(
-                bush,
-                this.m.bush,
-                "ellipsoid",
-                [Math.sin(i * 2) * 0.24, 0.3, Math.cos(i * 2) * 0.24],
-                [0.35, 0.4, 0.35],
-                [0, 0, 0],
-                0.13,
-              );
-            bush.position.set(x, elevation(x, z, area), z);
-            group.add(bush);
+            const prop = waysideModel(this.m, hash(x, z, 88) > 0.65 ? 1 : 0);
+            prop.position.set(x, h, z);
+            prop.rotation.y = Math.atan2(info.tz, info.tx);
+            group.add(prop);
           }
         }
+      }
+    this.scatter(group, foliage, this.m.leaf);
     this.scene.add(group);
-    this.chunks.set(`${area}:${cx}:${cz}`, { group, cx, cz, area });
+    this.chunks.set(area + ":" + cx + ":" + cz, { group, cx, cz, area, lod });
     return group;
   }
+  unloadChunk(k, ch) {
+    this.scene.remove(ch.group);
+    ch.group.traverse((o) => {
+      if (o.isPoints && o.geometry.getAttribute("plant")) o.geometry.dispose();
+    });
+    this.reflections = this.reflections.filter((r) => {
+      if (r.mirror.userData.chunk !== ch.group) return true;
+      this.scene.remove(r.mirror);
+      return false;
+    });
+    this.chunks.delete(k);
+  }
   loadArea(px, pz, area) {
-    const cx = Math.floor(px / 12),
-      cz = Math.floor(pz / 12),
-      key = `${area}:${cx}:${cz}`;
-    if (key === this.chunkKey) return;
-    this.chunkKey = key;
-    for (let z = Math.max(0, cz - 2); z <= cz + 2; z++)
-      for (let x = Math.max(0, cx - 2); x <= cx + 2; x++) {
-        const k = `${area}:${x}:${z}`;
-        if (!this.chunks.has(k)) this.patch(x, z, area);
-      }
+    const plan = chunkPlan(
+        visibleGroundBounds(this.viewCamera, { x: px, z: pz }),
+        { x: px, z: pz },
+        area,
+      ),
+      key = plan.map((c) => c.key + ":" + c.lod).join("|");
+    if (this.viewPlanKey === key) return;
+    this.viewPlanKey = key;
+    const wanted = new Map(plan.map((c) => [c.key, c]));
     for (const [k, ch] of this.chunks)
-      if (
-        ch.area !== area ||
-        Math.abs(ch.cx - cx) > 3 ||
-        Math.abs(ch.cz - cz) > 3
-      ) {
-        this.scene.remove(ch.group);
-        ch.group.traverse((o) => {
-          if (o.isPoints && o.geometry.getAttribute("plant"))
-            o.geometry.dispose();
-        });
-        this.chunks.delete(k);
-      }
+      if (!wanted.has(k) || wanted.get(k).lod !== ch.lod)
+        this.unloadChunk(k, ch);
+    for (const c of plan)
+      if (!this.chunks.has(c.key)) this.patch(c.x, c.z, area, false, c.lod);
   }
   landmarks() {
+    if (this.world.player.area === "vale")
+      for (const b of BRIDGES) {
+        const bridge = bridgeModel(this.m, b);
+        bridge.position.set(b.x, bridgeHeight(b), b.z);
+        this.scene.add(bridge);
+        this.mirror(bridge);
+        this.props.set(b.id, bridge);
+      }
     if (this.world.player.area === "isle") {
       const temple = ruinModel(this.m);
       temple.position.set(66, elevation(66, 48, "isle"), 48);
@@ -466,6 +663,15 @@ export class Renderer {
       this.scene.add(root);
       this.props.set(`house:${x}`, root);
     }
+    for (const village of VILLAGES)
+      for (let i = 0; i < 4; i++) {
+        const x = village.x + [-4, 5, -6, 6][i],
+          z = village.y + [-2, 5, 6, -4][i],
+          prop = waysideModel(this.m, [1, 2, 0, 3][i]);
+        prop.position.set(x, elevation(x, z), z);
+        prop.rotation.y = i % 2 ? Math.PI / 3 : 0;
+        this.scene.add(prop);
+      }
     for (const b of BENCHES) {
       const root = benchModel(this.m);
       root.position.set(b.x, elevation(b.x, b.y), b.y);
@@ -543,6 +749,8 @@ export class Renderer {
     knight.position.set(0.15, 0, 0.3);
     group.add(knight);
     this.avatar = knight;
+    this.viewCamera.fov = 43;
+    this.viewCamera.updateProjectionMatrix();
     const data = [],
       flowers = [];
     for (let z = -6; z < 6; z += 0.24)
@@ -956,10 +1164,76 @@ export class Renderer {
     }
     this.labelRoot.innerHTML = labels.join("");
   }
+  prologueFilm() {
+    const cine = this.world.cinematic,
+      shot = filmShotAt(cine.time),
+      p = this.world.player;
+    if (this.filmId !== shot.id) {
+      this.clear();
+      this.filmId = shot.id;
+      this.cineId = "prologue";
+      this.film = filmSet(this.m, shot.id, this.scatter.bind(this));
+      this.scene.add(this.film.root);
+    }
+    this.shared.focus.value.set(99, 0, 99);
+    this.shared.daylight.value = ["siege", "last-stand", "ashes"].includes(
+      shot.id,
+    )
+      ? 0.23
+      : 0.92;
+    this.film.actors.forEach((a) => {
+      if (a.role === "princess") return;
+      const combat = shot.id === "last-stand",
+        local = shot.local + (a.offset || 0),
+        anim = combat
+          ? {
+              kind: "slash" + (Math.floor(local / 1.6) % 3),
+              start: this.world.time - (local % 1.6),
+              duration: 0.85,
+            }
+          : {};
+      animateKnight(
+        a.root,
+        {
+          ...p,
+          hp: 1,
+          input: {},
+          mounted: false,
+          fishing: null,
+          camping: false,
+          roll: null,
+          block: 0,
+          anim,
+          facing: {
+            x: a.role === "enemy" ? 0 : 0.25,
+            y: a.role === "enemy" ? -1 : 1,
+          },
+        },
+        this.world.time,
+        this.motion,
+        shot.id === "oath" || shot.id === "ashes",
+      );
+    });
+    this.film.fires.forEach((f, i) =>
+      f.userData.flame.scale.set(
+        1 + Math.sin(cine.time * 7 + i) * 0.14,
+        1 + Math.cos(cine.time * 9 + i) * 0.25,
+        1,
+      ),
+    );
+    this.viewCamera.fov = shot.fov;
+    this.viewCamera.updateProjectionMatrix();
+    this.viewCamera.position.set(...shot.camera);
+    this.viewCamera.lookAt(...shot.target);
+  }
   cinematic(dt) {
     const cine = this.world.cinematic,
       time = this.world.time,
       p = this.world.player;
+    if (cine.id === "prologue") {
+      this.prologueFilm();
+      return;
+    }
     if (cine.id === "rest") {
       this.game(dt, true);
       return;
@@ -972,45 +1246,6 @@ export class Renderer {
       this.cineKnight = knightModel(this.m);
       this.cineRoot.add(this.cineKnight);
       this.cineKnight.position.set(-2, 0, 2);
-      if (cine.id === "prologue") {
-        const castle = new T.Group();
-        for (const x of [-4, 4]) {
-          points(
-            castle,
-            this.m.stone,
-            "cylinder",
-            [x, 2.6, 0],
-            [1, 5.2, 1],
-            [0, 0, 0],
-            0.14,
-          );
-          for (let i = 0; i < 6; i++) {
-            const a = (i / 6) * Math.PI * 2;
-            points(
-              castle,
-              this.m.stone,
-              "box",
-              [x + Math.sin(a) * 0.85, 5.4, Math.cos(a) * 0.85],
-              [0.45, 0.55, 0.45],
-            );
-          }
-        }
-        points(castle, this.m.plaster, "box", [0, 1.8, 0], [6, 3.6, 2]);
-        const gate = ruinModel(this.m);
-        gate.position.set(0, 0.1, 1.1);
-        castle.add(gate);
-        castle.position.z = -5;
-        this.cineRoot.add(castle);
-        const embers = [];
-        for (let i = 0; i < 120; i++)
-          embers.push({
-            x: (hash(i, 1) - 0.5) * 10,
-            y: hash(i, 2) * 7,
-            z: -5 + hash(i, 3) * 4,
-            r: hash(i, 6),
-          });
-        this.emberPoints = this.scatter(this.cineRoot, embers, this.m.glow);
-      }
       if (cine.id === "dragon" || cine.id === "flight") {
         this.cineDragon = dragonModel(this.m);
         this.cineRoot.add(this.cineDragon);
@@ -1130,6 +1365,10 @@ export class Renderer {
       }
     }
     this.currentMode = "game";
+    if (this.viewCamera.fov !== 43) {
+      this.viewCamera.fov = 43;
+      this.viewCamera.updateProjectionMatrix();
+    }
     this.camera.x = T.MathUtils.damp(this.camera.x, p.x, 7, dt);
     this.camera.y = T.MathUtils.damp(this.camera.y, p.y, 7, dt);
     const h = elevation(p.x, p.y, p.area),
@@ -1144,6 +1383,7 @@ export class Renderer {
     if (!["dungeon", "house"].includes(p.area)) this.loadArea(p.x, p.y, p.area);
     this.updateEntities(dt);
     this.updateObjects();
+    this.updateSwordTrail();
     if (p.area === "dungeon" && this.world.dungeon.bossDefeated) {
       if (!this.dungeonDragon) {
         this.dungeonDragon = dragonModel(this.m);
@@ -1161,6 +1401,78 @@ export class Renderer {
         v.set(i % 2 ? 29 : 3, 2, 5 + Math.floor(i / 2) * 6);
       else v.set(-999, 0, -999);
     });
+    this.updateCamp();
+  }
+  updateCamp() {
+    const camp = this.world.camp,
+      p = this.world.player,
+      key = camp ? camp.start + ":" + camp.area : null;
+    if (this.campKey !== key) {
+      if (this.campRoot) this.scene.remove(this.campRoot);
+      this.campRoot = camp ? campfireModel(this.m) : null;
+      this.campKey = key;
+      if (this.campRoot) this.scene.add(this.campRoot);
+    }
+    if (!this.campRoot) return;
+    const r = this.campRoot,
+      remaining =
+        camp.until === Infinity
+          ? 1
+          : Math.max(0, (camp.until - this.world.time) / 12);
+    r.visible = camp.area === p.area;
+    r.position.set(camp.x, elevation(camp.x, camp.y, camp.area), camp.y);
+    r.userData.flame.scale.set(
+      1 + Math.sin(this.world.time * 8) * 0.1,
+      remaining * (1 + Math.sin(this.world.time * 11) * 0.2),
+      1,
+    );
+    const lamp = this.shared.lamps.value[7];
+    lamp.set(camp.x, elevation(camp.x, camp.y, camp.area) + 0.8, camp.y);
+  }
+  updateSwordTrail() {
+    if (!this.avatar) return;
+    const p = this.world.player,
+      a = p.anim,
+      phase = (this.world.time - a.start) / (a.duration || 1),
+      active =
+        (a.kind.startsWith("slash") || a.kind === "cleave") &&
+        phase > 0.2 &&
+        phase < 0.75;
+    if (active) {
+      this.avatar.updateMatrixWorld(true);
+      this.trailSamples.push({
+        tip: this.avatar.userData.weapon.localToWorld(
+          new T.Vector3(0, 1.62, 0),
+        ),
+        base: this.avatar.userData.weapon.localToWorld(
+          new T.Vector3(0, 0.5, 0),
+        ),
+        time: this.world.time,
+      });
+    }
+    this.trailSamples = (this.trailSamples || []).filter(
+      (s) => this.world.time - s.time < 0.14,
+    );
+    if (this.swordTrail) {
+      this.scene.remove(this.swordTrail);
+      this.swordTrail.geometry.dispose();
+      this.swordTrail = null;
+    }
+    if (this.trailSamples.length < 2) return;
+    const data = [];
+    this.trailSamples.forEach((s) => {
+      for (let k = 0; k < 8; k++) {
+        const point = s.base.clone().lerp(s.tip, k / 8);
+        data.push({
+          x: point.x,
+          y: point.y,
+          z: point.z,
+          tint: [0.6, 0.8, 1],
+          r: k / 8,
+        });
+      }
+    });
+    this.swordTrail = this.scatter(this.scene, data, this.m.brightSteel);
   }
   draw(dt = 0.016, mode = "game") {
     const time = this.world.time,

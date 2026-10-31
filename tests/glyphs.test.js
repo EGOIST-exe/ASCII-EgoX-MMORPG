@@ -10,6 +10,12 @@ import {
   dragonModel,
   roomModel,
 } from "../src/glyph-models.js";
+import {
+  bridgeModel,
+  campfireModel,
+  waysideModel,
+} from "../src/environment-models.js";
+import { BRIDGES } from "../src/landscape.js";
 const mats = Object.fromEntries(
   [
     "steel",
@@ -33,6 +39,8 @@ const mats = Object.fromEntries(
     "darkDragon",
     "wing",
     "skin",
+    "fire",
+    "ember",
   ].map((k) => [k, new T.PointsMaterial({ size: 1 })]),
 );
 test("all visual structures consist of 3D ASCII point surfaces, never polygon meshes", () => {
@@ -42,6 +50,9 @@ test("all visual structures consist of 3D ASCII point surfaces, never polygon me
     houseModel(mats),
     dragonModel(mats),
     roomModel(mats),
+    bridgeModel(mats, BRIDGES[0]),
+    campfireModel(mats),
+    waysideModel(mats, 3),
   ]) {
     let points = 0,
       meshes = 0;
@@ -60,7 +71,7 @@ test("surface geometry contains depth and directional normals", () => {
   geo.computeBoundingBox();
   assert.ok(geo.boundingBox.max.z > geo.boundingBox.min.z);
 });
-test("knight animation swings the sword arm, braces the shield and changes seated posture", () => {
+test("knight swings a wrist-attached sword, parries without a shield and sits", () => {
   const g = knightModel(mats),
     p = {
       hp: 1,
@@ -74,7 +85,9 @@ test("knight animation swings the sword arm, braces the shield and changes seate
   assert.notEqual(g.userData.limbs.rightArm.rotation.x, a);
   p.anim = { kind: "block", start: 0, duration: 1 };
   animateKnight(g, p, 0.2);
-  assert.ok(g.userData.limbs.leftArm.rotation.x < -0.8);
+  assert.ok(g.userData.limbs.rightArm.rotation.x < -0.8);
+  assert.equal(g.userData.shield, undefined);
+  assert.equal(g.userData.weapon.parent, g.userData.wrist);
   animateKnight(g, { ...p, anim: {} }, 0.2, true, true);
   assert.ok(g.userData.body.position.y < -0.6);
   assert.ok(g.userData.limbs.rightLeg.rotation.x < -1);

@@ -115,7 +115,14 @@ export class Soundscape {
     n.stop(at + duration);
   }
   play(type, gain = 1) {
-    if (type === "cast") {
+    if (type === "roll") {
+      this.noise(0.4, 0.19 * gain, 420);
+      this.noise(0.12, 0.13 * gain, 1200, 0.35);
+      this.tone(140, 0.14, "triangle", 0.08 * gain, 0.45, 60);
+    } else if (type === "camp") {
+      this.noise(0.3, 0.14 * gain, 600);
+      this.tone(90, 0.2, "triangle", 0.05 * gain);
+    } else if (type === "cast") {
       this.noise(0.45, 0.12 * gain, 2400);
       this.tone(320, 0.3, "sine", 0.05 * gain, 0, 180);
     } else if (type === "bite") {
@@ -131,6 +138,10 @@ export class Soundscape {
       this.noise(0.12, 0.5 * gain, 500);
       this.tone(160, 0.35, "triangle", 0.35 * gain, 0, 35);
       this.tone(45, 0.7, "sine", 0.3 * gain);
+    } else if (type === "parry") {
+      this.noise(0.065, 0.17 * gain, 3200);
+      this.tone(1568, 0.3, "sine", 0.08 * gain);
+      this.tone(2093, 0.2, "triangle", 0.035 * gain, 0.015);
     } else if (type === "slash" || type === "dash") {
       this.noise(0.22, 0.24 * gain, 2600);
       this.tone(
@@ -209,6 +220,32 @@ export class Soundscape {
       this.lastThunder = time;
       this.noise(2.5, 0.25, 100, 0.2);
       this.tone(40, 2, "sine", 0.2, 0.25, 22);
+    }
+  }
+  ambience(time, camp, cinematic) {
+    if (!this.ctx) return;
+    const burning =
+      camp || ["siege", "last-stand", "ashes"].includes(cinematic?.id);
+    if (burning && time - (this.lastCrackle ?? -1) > 0.24) {
+      this.lastCrackle = time;
+      this.noise(
+        0.035 + Math.random() * 0.06,
+        0.025,
+        800 + Math.random() * 1800,
+      );
+    }
+    if (cinematic && this.filmSound !== cinematic.id) {
+      this.filmSound = cinematic.id;
+      if (cinematic.id === "siege") this.play("dragon", 0.6);
+      if (cinematic.id === "ashes") this.noise(1.4, 0.04, 200);
+    }
+    if (
+      cinematic?.id === "last-stand" &&
+      time - (this.lastFilmSword ?? -2) > 1.6
+    ) {
+      this.lastFilmSword = time;
+      this.play("slash", 0.4);
+      this.noise(0.07, 0.07, 2500, 0.25);
     }
   }
 }

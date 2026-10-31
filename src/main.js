@@ -1,3 +1,4 @@
+import { filmShotAt } from "./cinematography.js";
 import "./style.css";
 import {
   World,
@@ -132,7 +133,7 @@ function intro() {
     video.pause();
     video.removeAttribute("src");
     video.load();
-    creation();
+    filmIntro();
   };
   const draw = () => {
     if (done) return;
@@ -177,6 +178,34 @@ function intro() {
   draw();
   setTimeout(finish, 6500);
 }
+function filmCopy() {
+  const cine = world.cinematic;
+  if (!cine) return;
+  const shot = filmShotAt(cine.time);
+  $("#cinematic-title").textContent = shot.title;
+  $("#cinematic-line").textContent = shot.line.slice(
+    0,
+    Math.floor(shot.local * 35) + 1,
+  );
+  sound.ambience(world.time, false, shot);
+  document
+    .querySelector(".game")
+    ?.style.setProperty("--film-fade", shot.fade.toFixed(3));
+}
+function filmIntro() {
+  mode = "film";
+  world = new World();
+  world.startCinematic("prologue");
+  renderer?.dispose();
+  app.innerHTML =
+    '<section class="game film-intro in-cinematic"><canvas id="world" aria-label="Aurelions Fall – sechs vollständig in ASCII inszenierte Filmsequenzen"></canvas><div id="cinematic-copy"><span id="cinematic-title"></span><p id="cinematic-line"></p><button id="skip-cinematic">[ Enter ] Film überspringen</button></div></section>';
+  renderer = new Renderer($("#world"), world);
+  configureRenderer();
+  $("#skip-cinematic").onclick = () => {
+    world.finishCinematic();
+    creation();
+  };
+}
 function creation() {
   mode = "creation";
   world = new World();
@@ -194,7 +223,9 @@ function creation() {
       $("#knight-name").reportValidity();
       return;
     }
-    start(new World(makePlayer(n)));
+    const next = new World(makePlayer(n));
+    next.player.story.begun = true;
+    start(next);
   };
   $("#knight-name").oninput = (e) => e.target.setCustomValidity("");
   if ($("#continue-game"))
@@ -276,7 +307,8 @@ function updateUI() {
   const cine = world.cinematic;
   $("#cinematic-copy").hidden = !cine;
   $(".game").classList.toggle("in-cinematic", !!cine);
-  if (cine) {
+  if (cine?.id === "prologue") filmCopy();
+  else if (cine) {
     const spec = CINE[cine.id],
       segment = cine.duration / spec.lines.length,
       index = Math.min(spec.lines.length - 1, Math.floor(cine.time / segment)),
@@ -368,7 +400,7 @@ function renderPanel() {
       )
       .join(
         "",
-      )}</select></div><p class="note">WASD / Pfeile: Gehen · Shift: Sprinten<br>Leertaste: Schwert · 1–4: Ritterkünste<br>E: Benutzen / Angeln · G: Abbauen · Q: Trank<br>V: Drachenreiten · F: Flöte · Tab: Künste<br>Die Reise pausiert in Menüs.</p><div class="menu-actions"><button id="save-now">[ Speichern ]</button><button id="back-creation">[ Zur Linde ]</button></div><a class="discord" href="https://discord.gg/ego-x" target="_blank" rel="noopener noreferrer">EGOX / Discord ↗</a>`;
+      )}</select></div><p class="note">WASD / Pfeile: Gehen · Shift: Sprinten · Strg: Ausweichrolle<br>Leertaste: Schwert · 1–4: Ritterkünste<br>E: Benutzen / Angeln · G: Abbauen · Q: Trank<br>V: Drachenreiten · F: Flöte · Tab: Künste<br>Die Reise pausiert in Menüs.</p><div class="menu-actions"><button id="save-now">[ Speichern ]</button><button id="back-creation">[ Zur Linde ]</button></div><a class="discord" href="https://discord.gg/ego-x" target="_blank" rel="noopener noreferrer">EGOX / Discord ↗</a>`;
   }
   if (panel === "journal") {
     title = "Das Buch eines Eides";
@@ -388,7 +420,7 @@ function renderPanel() {
       .map(([label, n]) => `<span>${label}<b>${n}</b></span>`)
       .join(
         "",
-      )}</div><p class="chapter">Ritterschwert +${p.damageBonus} Schaden<br>Schild und Rüstung +${p.armor} Schutz</p><div class="menu-actions"><button id="drink-potion" ${!p.potions || p.hp >= maxHp(p) ? "disabled" : ""}>[ Heiltrank trinken ]</button><button id="eat-fish" ${!p.fish || p.hp >= maxHp(p) ? "disabled" : ""}>[ Fisch essen ]</button></div><p class="note">${p.story.dragon ? "Ascheflügel ist bei dir. V: Auf-/Absteigen." : "Ein Drache schlummert hinter dem letzten Tor."}<br>${p.story.flute ? "Mondglasflöte im Gepäck. F: Flug zwischen den Gebieten." : "Die Mondglasflöte fehlt noch."}</p><div class="arts">${SKILLS.map((s, i) => `<p><span>[ ${i + 1} ] ${s.name}</span><small>${p.level >= s.level ? `${s.cost} Atem / ${s.cd}s` : `Ab Rang ${s.level}`}</small></p>`).join("")}</div>`;
+      )}</div><p class="chapter">Ritterschwert +${p.damageBonus} Schaden<br>Rüstung und Kettenhemd +${p.armor} Schutz</p><div class="menu-actions"><button id="drink-potion" ${!p.potions || p.hp >= maxHp(p) ? "disabled" : ""}>[ Heiltrank trinken ]</button><button id="eat-fish" ${!p.fish || p.hp >= maxHp(p) ? "disabled" : ""}>[ Fisch essen ]</button></div><p class="note">${p.story.dragon ? "Ascheflügel ist bei dir. V: Auf-/Absteigen." : "Ein Drache schlummert hinter dem letzten Tor."}<br>${p.story.flute ? "Mondglasflöte im Gepäck. F: Flug zwischen den Gebieten." : "Die Mondglasflöte fehlt noch."}</p><div class="arts">${SKILLS.map((s, i) => `<p><span>[ ${i + 1} ] ${s.name}</span><small>${p.level >= s.level ? `${s.cost} Atem / ${s.cd}s` : `Ab Rang ${s.level}`}</small></p>`).join("")}</div>`;
   }
   if (panel === "shop") {
     title = "Nelas kleiner Handel";
@@ -530,7 +562,15 @@ document.addEventListener("keydown", (e) => {
     window.skipIntro?.();
     return;
   }
-  if (mode !== "game" || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (mode === "film") {
+    if (["enter", "escape"].includes(key)) {
+      e.preventDefault();
+      world.finishCinematic();
+      creation();
+    }
+    return;
+  }
+  if (mode !== "game" || e.altKey || e.metaKey) return;
   if (
     ["INPUT", "SELECT"].includes(document.activeElement?.tagName) &&
     key !== "escape"
@@ -578,6 +618,26 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (panel) return;
+  world.activity();
+  if (key === "control") {
+    e.preventDefault();
+    if (!e.repeat) act("roll");
+    return;
+  }
+  if (
+    e.ctrlKey &&
+    ![
+      "w",
+      "a",
+      "s",
+      "d",
+      "arrowup",
+      "arrowdown",
+      "arrowleft",
+      "arrowright",
+    ].includes(key)
+  )
+    return;
   if (
     [
       "w",
@@ -617,6 +677,14 @@ window.addEventListener("beforeunload", save);
 function loop(ms) {
   const dt = Math.min((ms - last) / 1000 || 0.016, 0.05);
   last = ms;
+  if (mode === "film") {
+    world.update(dt);
+    if (world.cinematic) {
+      renderer.draw(dt, "film");
+      filmCopy();
+      sound.tick(world.time, "clear", "", "film");
+    } else creation();
+  }
   if (mode === "creation") {
     world.time += dt;
     renderer?.draw(dt, "creation");
@@ -639,6 +707,10 @@ function loop(ms) {
       if (keys.g) act("gather");
     }
     renderer.draw(dt);
+    sound.ambience(
+      world.time,
+      world.camp && world.camp.area === world.player.area,
+    );
     sound.tick(
       world.time,
       world.weather,

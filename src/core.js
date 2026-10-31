@@ -1,3 +1,12 @@
+import {
+  landHeight,
+  bridgeAt,
+  bridgeHeight,
+  onPath,
+  borderDistance,
+  riverCenter,
+} from "./landscape.js";
+import { FILM_DURATION, FILM_SHOTS } from "./cinematography.js";
 export const WORLD_SIZE = 768;
 export const DAY_LENGTH = 720;
 export const SPAWN = { x: 48, y: 73, area: "vale" };
@@ -38,20 +47,15 @@ export const KNIGHT = {
 };
 export const SKILLS = [
   { name: "Schwerthieb", key: "1", cost: 20, cd: 4, level: 1 },
-  { name: "Schildwacht", key: "2", cost: 15, cd: 10, level: 1 },
+  { name: "Schwertwacht", key: "2", cost: 15, cd: 10, level: 1 },
   { name: "Sturmtritt", key: "3", cost: 24, cd: 7, level: 3 },
   { name: "Letzter Eid", key: "4", cost: 30, cd: 24, level: 5 },
 ];
 export const CINE = {
   prologue: {
-    duration: 17,
+    duration: FILM_DURATION,
     title: "Als die Sterne fielen",
-    lines: [
-      "Einst trugen die Türme von Aurelion das erste Licht.",
-      "Dann kam die Nacht aus dem Norden. Und mit ihr das Feuer.",
-      "Dein Königreich fiel. Von Prinzessin Elara blieb nur ein silbernes Band.",
-      "Doch unter einer alten Linde glimmt noch ein Eid: Du wirst sie finden.",
-    ],
+    lines: FILM_SHOTS.map((s) => s.line),
   },
   rest: {
     duration: 6,
@@ -67,7 +71,7 @@ export const CINE = {
     lines: [
       "Hinter dem letzten Tor liegt kein Schatz.",
       "Ein junger Drache hebt den Kopf. Seine Ketten sind zerbrochen.",
-      "Er erkennt das Zeichen Aurelions auf deinem Schild.",
+      "Er erkennt das Zeichen Aurelions auf deiner Rüstung.",
       "Nicht jedes Wesen der alten Welt hat deinen Eid vergessen.",
     ],
   },
@@ -98,7 +102,7 @@ export function hash(x, y, seed = 71839) {
   return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
 }
 export function riverX(y) {
-  return 94 + Math.sin(y / 22) * 7 + Math.sin(y / 49) * 9;
+  return riverCenter(y);
 }
 export function safeAt(x, y, area = "vale") {
   return (
@@ -110,29 +114,23 @@ export function safeAt(x, y, area = "vale") {
 }
 export function elevation(x, y, area = "vale") {
   if (area === "dungeon" || area === "house") return 0;
-  const rolling =
-    Math.sin(x * 0.042) * Math.cos(y * 0.036) + Math.sin((x + y) * 0.023) * 0.6;
-  const hill = Math.max(0, 1 - Math.hypot(x - 66, y - 91) / 16) * 1.5;
-  return 1.2 + Math.floor((rolling * 0.6 + hill) * 3) / 3;
+  const bridge = area === "vale" && bridgeAt(x, y);
+  return bridge ? bridgeHeight(bridge) : landHeight(x, y);
 }
 export function terrain(x, y, area = "vale") {
   if (area === "house")
     return x < 1 || x > 15 || y < 1 || y > 12 ? "wall" : "room";
   if (area === "dungeon")
     return x < 2 || x > 30 || y < 2 || y > 27 ? "wall" : "stone";
-  if (x < 1 || y < 1 || x > WORLD_SIZE - 2 || y > WORLD_SIZE - 2) return "wall";
+  if (area === "vale" && borderDistance(x, y) < 30) return "mountain";
   if (area === "isle") {
     const distance = Math.hypot((x - 54) * 0.8, y - 64);
     if (distance > 36) return "water";
     return Math.abs(y - 64) < 1.4 ? "path" : distance > 31 ? "sand" : "meadow";
   }
-  if (Math.abs(x - riverX(y)) < 3.2 && Math.abs(y - 70) > 1.8) return "water";
-  if (
-    Math.abs(y - 70) < 1.5 ||
-    (Math.abs(x - 48) < 1 && y > 60 && y < 86) ||
-    VILLAGES.some((v) => Math.abs(x - v.x) < 1.2 && Math.abs(y - v.y) < 10)
-  )
-    return "path";
+  if (bridgeAt(x, y)) return "bridge";
+  if (Math.abs(x - riverX(y)) < 3.2) return "water";
+  if (onPath(x, y)) return "path";
   if (Math.hypot(x - DUNGEON.x, y - DUNGEON.y) < 5) return "stone";
   const woods =
     Math.sin(x * 0.09) + Math.cos(y * 0.075) + Math.sin((x + y) * 0.04);
@@ -143,7 +141,7 @@ export function treeAt(x, y, area = "vale") {
     area === "dungeon" ||
     area === "house" ||
     terrain(x, y, area) === "water" ||
-    terrain(x, y, area) === "path"
+    ["path", "bridge", "mountain"].includes(terrain(x, y, area))
   )
     return false;
   if (
@@ -161,7 +159,7 @@ export function treeAt(x, y, area = "vale") {
 export function rockAt(x, y, area = "vale") {
   return (
     area !== "dungeon" &&
-    !["water", "path"].includes(terrain(x, y, area)) &&
+    !["water", "path", "bridge", "mountain"].includes(terrain(x, y, area)) &&
     !treeAt(x, y, area) &&
     hash(x, y, 184) > 0.989
   );
@@ -170,7 +168,7 @@ export function walkable(x, y, area = "vale", depleted = {}, time = 0) {
   const xx = Math.round(x),
     yy = Math.round(y),
     t = terrain(xx, yy, area);
-  if (t === "water" || t === "wall") return false;
+  if (["water", "wall", "mountain"].includes(t)) return false;
   if (
     area === "house" &&
     ((x < 4.2 && y < 5.2) ||
@@ -186,6 +184,18 @@ export function walkable(x, y, area = "vale", depleted = {}, time = 0) {
   return (
     !treeAt(xx, yy, area) || depleted[`${area}:tree:${xx}:${yy}`]?.until > time
   );
+}
+function recoverGround(point, depleted = {}, time = 0) {
+  if (walkable(point.x, point.y, point.area, depleted, time)) return point;
+  for (let radius = 1; radius <= 48; radius++) {
+    for (let i = 0; i < 64; i++) {
+      const angle = (i * Math.PI) / 32,
+        x = point.x + Math.cos(angle) * radius,
+        y = point.y + Math.sin(angle) * radius;
+      if (walkable(x, y, point.area, depleted, time)) return { ...point, x, y };
+    }
+  }
+  return { ...SPAWN };
 }
 export function daylight(clock) {
   const hour =
@@ -244,6 +254,10 @@ export function makePlayer(name = "Wanderer") {
     cooldowns: [0, 0, 0, 0],
     attackCd: 0,
     block: 0,
+    roll: null,
+    rollCd: 0,
+    idleSince: 0,
+    camping: false,
     combo: 0,
     kills: 0,
     facing: { x: 0, y: 1 },
@@ -339,6 +353,47 @@ export class World {
   notify(text) {
     this.event("message", { text });
   }
+  activity() {
+    const p = this.player;
+    p.idleSince = this.time;
+    if (p.camping) {
+      p.camping = false;
+      if (this.camp) this.camp.until = this.time + 12;
+      this.animate("idle", 0.2);
+    }
+  }
+  roll() {
+    const p = this.player;
+    if (
+      p.hp <= 0 ||
+      this.cinematic ||
+      p.mounted ||
+      p.fishing ||
+      p.roll ||
+      p.rollCd > 0 ||
+      p.stamina < 25
+    )
+      return false;
+    this.activity();
+    const inp = p.input || {};
+    let dx = +!!inp.right - +!!inp.left,
+      dy = +!!inp.down - +!!inp.up;
+    if (!dx && !dy) {
+      dx = p.facing.x;
+      dy = p.facing.y;
+    }
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len;
+    dy /= len;
+    p.facing = { x: dx, y: dy };
+    p.roll = { start: this.time, duration: 0.72, dx, dy };
+    p.rollCd = 1.15;
+    p.stamina -= 25;
+    p.block = 0;
+    this.animate("roll", 0.72);
+    this.event("sound", { name: "roll" });
+    return true;
+  }
   animate(kind, duration = 0.65) {
     this.player.anim = {
       kind,
@@ -362,6 +417,8 @@ export class World {
   }
   startCinematic(id, extra = {}) {
     if (!CINE[id]) return;
+    this.activity();
+    this.player.roll = null;
     this.player.fishing = null;
     this.player.input = {};
     this.cinematic = { id, time: 0, duration: CINE[id].duration, ...extra };
@@ -510,7 +567,9 @@ export class World {
     let dx = +!!inp.right - +!!inp.left,
       dy = +!!inp.down - +!!inp.up;
     const moving = dx || dy;
-    if (moving) {
+    if (moving) this.activity();
+    const rolling = !!p.roll;
+    if (moving && !rolling) {
       if (p.fishing) {
         p.fishing = null;
         this.notify("Du holst die Angel ein.");
@@ -527,7 +586,54 @@ export class World {
       );
       p.stamina = Math.max(0, p.stamina - (sprint && !p.mounted ? 23 * dt : 0));
     }
-    p.stamina = Math.min(100, p.stamina + dt * (moving && inp.sprint ? 0 : 17));
+    if (p.roll) {
+      const r = p.roll,
+        t = Math.min(1, (this.time - r.start) / r.duration),
+        last = Math.max(0, (this.time - dt - r.start) / r.duration);
+      const distance =
+        5.2 * (Math.cos(last * Math.PI) - Math.cos(t * Math.PI)) * 0.5;
+      this.move(p, r.dx * distance, r.dy * distance);
+      if (t >= 1) p.roll = null;
+    }
+    p.rollCd = Math.max(0, p.rollCd - dt);
+    p.stamina = Math.min(
+      100,
+      p.stamina +
+        dt * (rolling || (moving && inp.sprint) ? 0 : p.camping ? 25 : 17),
+    );
+    const threatened = this.activeMobs().some(
+      (m) => !m.dead && Math.hypot(m.x - p.x, m.y - p.y) < 12,
+    );
+    if (threatened && p.camping) this.activity();
+    if (
+      !moving &&
+      !p.roll &&
+      !p.fishing &&
+      !p.mounted &&
+      !threatened &&
+      ["vale", "isle"].includes(p.area) &&
+      terrain(p.x, p.y, p.area) !== "bridge" &&
+      this.time - p.idleSince > 25 &&
+      !p.camping
+    ) {
+      const angle = Math.atan2(p.facing.y, p.facing.x);
+      for (let i = 0; i < 8; i++) {
+        const x = p.x + Math.cos(angle + (i * Math.PI) / 4) * 1.7,
+          y = p.y + Math.sin(angle + (i * Math.PI) / 4) * 1.7;
+        if (
+          !walkable(x, y, p.area, this.depleted, this.time) ||
+          terrain(x, y, p.area) === "bridge"
+        )
+          continue;
+        p.camping = true;
+        p.facing = { x: (x - p.x) / 1.7, y: (y - p.y) / 1.7 };
+        this.animate("sit", 1);
+        this.camp = { x, y, area: p.area, start: this.time, until: Infinity };
+        this.event("sound", { name: "camp" });
+        break;
+      }
+    }
+    if (this.camp && this.camp.until < this.time) this.camp = null;
     p.attackCd = Math.max(0, p.attackCd - dt);
     p.block = Math.max(0, p.block - dt);
     p.cooldowns = p.cooldowns.map((c) => Math.max(0, c - dt));
@@ -560,6 +666,15 @@ export class World {
             ((p.y - m.y) / distance) * (m.type === "boss" ? 1.6 : 2) * dt,
           );
         else if (m.cd <= 0) {
+          if (
+            p.roll &&
+            this.time - p.roll.start > 0.08 &&
+            this.time - p.roll.start < 0.6
+          ) {
+            m.cd = 0.65;
+            this.effect(p.x, p.y, "dodge", "Ausgewichen");
+            continue;
+          }
           const raw =
               m.damage + (m.type === "boss" && m.hp < m.maxHp * 0.4 ? 5 : 0),
             damage = Math.max(
@@ -572,10 +687,12 @@ export class World {
           m.cd = m.type === "boss" ? 1.3 : 1.7;
           m.anim = this.time;
           this.effect(p.x, p.y, p.block > 0 ? "block" : "damage", `-${damage}`);
-          this.event("sound", { name: p.block > 0 ? "shield" : "hurt" });
+          this.event("sound", { name: p.block > 0 ? "parry" : "hurt" });
           if (p.hp === 0) {
             p.fishing = null;
             p.mounted = false;
+            p.roll = null;
+            p.camping = false;
             this.animate("death", 2);
             this.notify("Der Eid bleibt. Kehre am letzten Rastplatz zurück.");
           }
@@ -606,7 +723,8 @@ export class World {
   }
   attack(slot = -1) {
     const p = this.player;
-    if (p.hp <= 0 || this.cinematic || p.fishing) return false;
+    if (p.hp <= 0 || this.cinematic || p.fishing || p.roll) return false;
+    this.activity();
     if (p.attackCd > 0 && slot < 0) return false;
     const skill = SKILLS[slot];
     if (
@@ -625,7 +743,7 @@ export class World {
       p.block = 6;
       this.animate("block", 0.8);
       this.effect(p.x, p.y, "block");
-      this.event("sound", { name: "shield" });
+      this.event("sound", { name: "parry" });
       return true;
     }
     if (slot === 3) {
@@ -772,7 +890,7 @@ export class World {
               "Die Gewölbe öffnen sich nur einem Ritter von Rang 4. Ein alter Drache wartet dort.",
             ]
           : [
-              "Dein Schild … du kommst aus Aurelion. Wir sahen den Rauch noch tagelang.",
+              "Deine Rüstung … du kommst aus Aurelion. Wir sahen den Rauch noch tagelang.",
               "Elara lebte, als die königliche Wache den Silberfluss überquerte. Jenseits des Nebels verlor sich ihre Spur.",
               "Finde die drei Siegel. Befreie das Herz unter der Asche. Vielleicht kennt es noch den Weg zu ihr.",
             ],
@@ -999,18 +1117,26 @@ export class World {
     }
     if (type === "respawn") {
       if (p.hp > 0) return;
-      Object.assign(p, p.checkpoint);
+      Object.assign(p, recoverGround(p.checkpoint, this.depleted, this.time));
       p.hp = maxHp(p);
       p.stamina = 100;
       p.coins = Math.floor(p.coins * 0.95);
       p.fishing = null;
       p.block = 0;
+      p.roll = null;
+      p.rollCd = 0;
+      p.camping = false;
+      p.idleSince = this.time;
+      this.camp = null;
       this.animate("respawn", 1.6);
       this.effect(p.x, p.y, "heal");
       this.notify("Ein neuer Atemzug. Dein Eid ist noch nicht erfüllt.");
       return;
     }
     if (p.hp <= 0 || this.cinematic) return;
+    if (p.roll) return;
+    this.activity();
+    if (type === "roll") this.roll();
     if (type === "attack") this.attack();
     if (type === "skill") this.attack(data);
     if (type === "interact") this.interact();
@@ -1097,6 +1223,10 @@ export class World {
       gender: "male",
       input: {},
       fishing: null,
+      roll: null,
+      rollCd: 0,
+      camping: false,
+      idleSince: data?.time || 0,
       cooldowns: [0, 0, 0, 0],
       story: { ...defaults.story, ...raw.story },
       checkpoint: { ...SPAWN, ...raw.checkpoint },
@@ -1129,6 +1259,11 @@ export class World {
       w.mobs.push(...(data.dungeonMobs || []));
       w.cinematic = data.cinematic || null;
     }
+    Object.assign(
+      p,
+      recoverGround({ x: p.x, y: p.y, area: p.area }, w.depleted, w.time),
+    );
+    p.checkpoint = recoverGround(p.checkpoint, w.depleted, w.time);
     return w;
   }
 }

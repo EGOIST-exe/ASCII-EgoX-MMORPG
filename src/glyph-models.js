@@ -1,3 +1,4 @@
+import { batchRigid } from "./ascii-batch.js";
 import * as T from "three";
 import { hash } from "./core.js";
 
@@ -122,9 +123,11 @@ export function beam(parent, mat, a, b, r = 0.06) {
 
 export function knightModel(m) {
   const root = new T.Group(),
-    body = new T.Group();
-  root.add(body);
-  const d = { body, limbs: {}, head: null, weapon: null, shield: null };
+    body = new T.Group(),
+    pivot = new T.Group();
+  root.add(pivot);
+  pivot.add(body);
+  const d = { body, pivot, limbs: {}, head: null, weapon: null };
   root.userData = d;
   points(
     body,
@@ -399,8 +402,43 @@ export function knightModel(m) {
     );
   }
   const weapon = new T.Group();
-  weapon.position.set(0, -0.43, 0.06);
-  d.limbs.rightElbow.add(weapon);
+  const wrist = new T.Group();
+  wrist.position.set(0, -0.44, 0.025);
+  d.limbs.rightElbow.add(wrist);
+  d.wrist = wrist;
+  // The grip and every finger share a wrist pivot, so the blade cannot detach during a swing.
+  const elbow = d.limbs.rightElbow;
+  elbow.children.slice(2, 6).forEach((o) => elbow.remove(o));
+  points(
+    wrist,
+    m.darkSteel,
+    "ellipsoid",
+    [0, 0.02, -0.055],
+    [0.11, 0.115, 0.07],
+    [0, 0, 0],
+    0.028,
+  );
+  for (let f = 0; f < 4; f++) {
+    points(
+      wrist,
+      m.steel,
+      "ellipsoid",
+      [0.055, -0.075 + f * 0.05, 0.008],
+      [0.065, 0.022, 0.06],
+      [0, 0, 0],
+      0.018,
+    );
+  }
+  points(
+    wrist,
+    m.steel,
+    "ellipsoid",
+    [-0.055, 0.065, 0.025],
+    [0.04, 0.055, 0.045],
+    [0, 0, -0.5],
+    0.018,
+  );
+  wrist.add(weapon);
   d.weapon = weapon;
   points(
     weapon,
@@ -456,46 +494,6 @@ export function knightModel(m) {
     [0, 0, 0],
     0.025,
   );
-  const shield = new T.Group();
-  shield.position.set(-0.04, -0.22, 0.19);
-  d.limbs.leftElbow.add(shield);
-  d.shield = shield;
-  points(
-    shield,
-    m.gold,
-    "ellipsoid",
-    [0, 0, 0],
-    [0.41, 0.57, 0.1],
-    [0, 0, 0],
-    0.055,
-  );
-  points(
-    shield,
-    m.cloth,
-    "ellipsoid",
-    [0, 0, 0.07],
-    [0.35, 0.5, 0.065],
-    [0, 0, 0],
-    0.05,
-  );
-  points(
-    shield,
-    m.gold,
-    "box",
-    [0, 0, 0.135],
-    [0.055, 0.72, 0.02],
-    [0, 0, 0],
-    0.035,
-  );
-  points(
-    shield,
-    m.gold,
-    "box",
-    [0, 0.07, 0.135],
-    [0.46, 0.055, 0.02],
-    [0, 0, 0],
-    0.035,
-  );
   const tool = new T.Group();
   weapon.parent.add(tool);
   tool.position.copy(weapon.position);
@@ -519,7 +517,7 @@ export function knightModel(m) {
     [0, 0, 0],
     0.04,
   );
-  return root;
+  return batchRigid(root);
 }
 export function animateKnight(root, p, time, motion = true, seated = false) {
   const d = root.userData,
@@ -535,7 +533,12 @@ export function animateKnight(root, p, time, motion = true, seated = false) {
           : active
             ? a.kind || "idle"
             : "idle";
+  seated = seated || p.camping;
+  d.pivot.position.set(0, 0, 0);
+  d.pivot.rotation.set(0, 0, 0);
   const moving =
+      !p.roll &&
+      !seated &&
       motion &&
       p.input &&
       (p.input.up || p.input.down || p.input.left || p.input.right),
@@ -562,7 +565,7 @@ export function animateKnight(root, p, time, motion = true, seated = false) {
   d.weapon.visible = true;
   d.tool.visible = false;
   d.weapon.rotation.set(0, 0, 0);
-  d.shield.rotation.set(0, 0, 0);
+  d.wrist.rotation.set(2.05, 0, -0.15);
   if (seated || kind === "sit" || kind === "fish" || p.mounted) {
     d.body.position.y = p.mounted
       ? -0.4
@@ -583,26 +586,51 @@ export function animateKnight(root, p, time, motion = true, seated = false) {
     l.leftArm.rotation.x = -0.5;
     l.rightElbow.rotation.x = -0.8;
     l.leftElbow.rotation.x = -0.7;
-    d.weapon.rotation.z = 0.6;
+    d.wrist.rotation.set(1.8, 0.2, 0.5);
   }
   if (
     kind.startsWith("slash") ||
     ["cleave", "charge", "chop", "mine"].includes(kind)
   ) {
-    const swing = Math.sin(progress * Math.PI);
-    l.rightArm.rotation.x = -2.25 + progress * 3.8;
-    l.rightArm.rotation.z = -0.55 + swing * 0.7;
-    l.rightElbow.rotation.x = -0.5 + swing * 0.4;
-    d.body.rotation.y = -0.45 + swing * 0.8;
+    const t = Math.max(0, Math.min(1, progress));
+    // Anticipation (0-.24), fast cut (.24-.64), then a slower recovery.
+    const ease = (v) => v * v * (3 - 2 * v),
+      cut = ease(Math.max(0, Math.min(1, (t - 0.24) / 0.4))),
+      recover = ease(Math.max(0, (t - 0.64) / 0.36));
+    const wind = ease(Math.min(1, t / 0.24)),
+      reverse = kind === "slash2" ? -1 : 1,
+      overhead =
+        kind === "slash0" ||
+        kind === "cleave" ||
+        kind === "chop" ||
+        kind === "mine";
+    l.rightArm.rotation.set(
+      -0.45 - wind * 1.55 + cut * 2.25 - recover * 0.25,
+      reverse * (0.5 - wind * 0.95 + cut * 1.2),
+      reverse * (-0.25 - wind * 0.7 + cut * 1.45 - recover * 0.5),
+    );
+    l.rightElbow.rotation.x = -0.3 - wind * 0.85 + cut * 0.9;
+    d.wrist.rotation.set(
+      overhead ? 0.2 : 0.55,
+      0,
+      reverse * (-0.3 + cut * 0.6),
+    );
+    d.body.rotation.y =
+      reverse * (-wind * 0.48 + cut * 0.95) * (1 - recover * 0.8);
+    d.body.rotation.x = Math.sin(t * Math.PI) * 0.12;
+    l.leftArm.rotation.set(-0.35 + cut * 0.65, 0, 0.35 + wind * 0.3);
+    l.leftElbow.rotation.x = -0.7;
     if (kind === "chop" || kind === "mine") {
       d.weapon.visible = false;
       d.tool.visible = true;
     }
   }
   if (kind === "block" || p.block > 0) {
-    l.leftArm.rotation.x = -1.05;
-    l.leftElbow.rotation.x = -0.6;
-    d.shield.rotation.y = -0.35;
+    l.rightArm.rotation.set(-1.15, -0.3, -0.4);
+    l.rightElbow.rotation.x = -1.1;
+    d.wrist.rotation.set(0.35, 0, -0.8);
+    l.leftArm.rotation.set(-0.7, 0, 0.4);
+    l.leftElbow.rotation.x = -1.2;
   }
   if (kind === "drink") {
     l.rightArm.rotation.x = -1.6;
@@ -617,6 +645,21 @@ export function animateKnight(root, p, time, motion = true, seated = false) {
     l.rightArm.rotation.x = -0.95;
     l.rightElbow.rotation.x = -0.4;
     d.weapon.visible = false;
+  }
+  if (p.roll) {
+    const t = Math.max(0, Math.min(1, (time - p.roll.start) / p.roll.duration));
+    d.pivot.position.y = 0.95 + Math.sin(t * Math.PI) * 0.3;
+    d.pivot.rotation.x = -t * Math.PI * 2;
+    d.body.position.y = -1.15;
+    l.rightLeg.rotation.x = -1.8;
+    l.leftLeg.rotation.x = -1.8;
+    l.rightKnee.rotation.x = 1.9;
+    l.leftKnee.rotation.x = 1.9;
+    l.rightArm.rotation.x = -1.4;
+    l.rightElbow.rotation.x = -1.4;
+    l.leftArm.rotation.x = -1.7;
+    l.leftElbow.rotation.x = -1.6;
+    d.wrist.rotation.x = 0.25;
   }
   if (kind === "death") {
     d.body.rotation.z = -Math.PI * 0.48;
@@ -666,7 +709,7 @@ export function treeModel(m, variant = 0) {
       0.16,
     );
   }
-  return g;
+  return batchRigid(g);
 }
 export function houseModel(m) {
   const g = new T.Group();
@@ -731,7 +774,7 @@ export function houseModel(m) {
       [0, 0.14 - i * 0.035, 2.13 + i * 0.27],
       [1.2, 0.12, 0.5],
     );
-  return g;
+  return batchRigid(g);
 }
 export function ruinModel(m) {
   const g = new T.Group();
@@ -772,7 +815,7 @@ export function ruinModel(m) {
       [0.3 + hash(i, 3) * 0.5, 0.26, 0.4],
       [0, hash(i, 2) * 3, 0.1],
     );
-  return g;
+  return batchRigid(g);
 }
 export function benchModel(m) {
   const g = new T.Group();
@@ -785,7 +828,7 @@ export function benchModel(m) {
     points(g, m.wood, "box", [x, 1, -0.5], [0.08, 1.4, 0.08]);
   for (let i = 0; i < 3; i++)
     points(g, m.wood, "box", [0, 1 + i * 0.22, -0.5], [2.7, 0.15, 0.09]);
-  return g;
+  return batchRigid(g);
 }
 export function villagerModel(m, princess = false) {
   const g = new T.Group(),
@@ -875,7 +918,7 @@ export function villagerModel(m, princess = false) {
       [0, 0, 0],
       0.06,
     );
-  return g;
+  return batchRigid(g);
 }
 export function roomModel(m) {
   const g = new T.Group();
@@ -971,7 +1014,7 @@ export function roomModel(m) {
       );
   }
   points(g, m.cloth, "box", [8, 0.02, 7], [3.5, 0.04, 4], [0, 0, 0], 0.13);
-  return g;
+  return batchRigid(g);
 }
 export function dragonModel(m) {
   const g = new T.Group(),
@@ -1064,5 +1107,5 @@ export function dragonModel(m) {
     geo.setAttribute("jitter", new T.Float32BufferAttribute(random, 1));
     wing.add(new T.Points(geo, m.wing));
   }
-  return g;
+  return batchRigid(g);
 }

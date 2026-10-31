@@ -70,7 +70,7 @@ test("sword attacks animate, consume cooldown and cannot be spammed", () => {
   w.attack();
   assert.equal(m.hp, next);
 });
-test("shield reduces incoming damage; healing and respawn retain story", () => {
+test("sword guard reduces incoming damage; healing and respawn retain story", () => {
   const w = new World(),
     p = w.player;
   p.x = 77;
